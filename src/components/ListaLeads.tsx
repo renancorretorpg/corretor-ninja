@@ -17,9 +17,10 @@ interface ListaLeadsProps {
   status: string;
   origem: string;
   search: string;
+  onSelectLead: (lead: Lead) => void;
 }
 
-export function ListaLeads({ status, origem, search }: ListaLeadsProps) {
+export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsProps) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
@@ -124,7 +125,11 @@ export function ListaLeads({ status, origem, search }: ListaLeadsProps) {
               </tr>
             )}
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-t border-border hover:bg-muted/30">
+              <tr
+                key={row.id}
+                className="cursor-pointer border-t border-border hover:bg-muted/30"
+                onClick={() => onSelectLead(row.original)}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

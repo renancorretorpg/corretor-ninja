@@ -98,6 +98,18 @@ export function useUpdateLead() {
   });
 }
 
+export function useDeleteLead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => fetchJson<{ ok: true }>(`/api/leads/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leads-kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['statuses'] });
+    },
+  });
+}
+
 export function useEtapas() {
   return useQuery({
     queryKey: ['etapas'],

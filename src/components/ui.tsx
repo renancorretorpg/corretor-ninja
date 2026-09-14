@@ -60,11 +60,13 @@ export function Modal({
   onClose,
   title,
   children,
+  maxWidth = 'max-w-sm',
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  maxWidth?: string;
 }) {
   if (!open) return null;
   return (
@@ -73,7 +75,7 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-lg border border-border bg-card p-4 shadow-lg"
+        className={`w-full ${maxWidth} rounded-lg border border-border bg-card p-4 shadow-lg max-h-[90vh] overflow-y-auto`}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-3 text-sm font-semibold">{title}</h2>

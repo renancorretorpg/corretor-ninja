@@ -19,9 +19,10 @@ interface KanbanLeadsProps {
   status: string;
   origem: string;
   search: string;
+  onSelectLead: (lead: Lead) => void;
 }
 
-function LeadCard({ lead }: { lead: Lead }) {
+function LeadCard({ lead, onSelectLead }: { lead: Lead; onSelectLead: (lead: Lead) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: lead.id,
     data: { lead },
@@ -37,6 +38,7 @@ function LeadCard({ lead }: { lead: Lead }) {
       style={style}
       {...listeners}
       {...attributes}
+      onClick={() => onSelectLead(lead)}
       className={`cursor-grab active:cursor-grabbing ${isDragging ? 'opacity-40' : ''}`}
     >
       <Card className="mb-2 p-3">
@@ -50,7 +52,15 @@ function LeadCard({ lead }: { lead: Lead }) {
   );
 }
 
-function Coluna({ etapa, leads }: { etapa: Etapa | { nome: string; cor: string | null }; leads: Lead[] }) {
+function Coluna({
+  etapa,
+  leads,
+  onSelectLead,
+}: {
+  etapa: Etapa | { nome: string; cor: string | null };
+  leads: Lead[];
+  onSelectLead: (lead: Lead) => void;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: etapa.nome });
 
   return (
@@ -70,14 +80,14 @@ function Coluna({ etapa, leads }: { etapa: Etapa | { nome: string; cor: string |
       </div>
       <div className="min-h-[80px] flex-1">
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} />
+          <LeadCard key={lead.id} lead={lead} onSelectLead={onSelectLead} />
         ))}
       </div>
     </div>
   );
 }
 
-export function KanbanLeads({ status, origem, search }: KanbanLeadsProps) {
+export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLeadsProps) {
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const { data, isLoading, isError, error } = useAllLeadsForKanban({
     status: status || undefined,
@@ -125,10 +135,10 @@ export function KanbanLeads({ status, origem, search }: KanbanLeadsProps) {
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex gap-3 overflow-x-auto pb-2">
         {colunas.map(({ etapa, leads }) => (
-          <Coluna key={etapa.nome} etapa={etapa} leads={leads} />
+          <Coluna key={etapa.nome} etapa={etapa} leads={leads} onSelectLead={onSelectLead} />
         ))}
       </div>
-      <DragOverlay>{activeLead ? <LeadCard lead={activeLead} /> : null}</DragOverlay>
+      <DragOverlay>{activeLead ? <LeadCard lead={activeLead} onSelectLead={() => {}} /> : null}</DragOverlay>
     </DndContext>
   );
 }

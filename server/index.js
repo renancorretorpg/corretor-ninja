@@ -133,7 +133,7 @@ app.get('/api/leads/origens', requireAuth, async (req, res) => {
 app.patch('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const allowedFields = ['status', 'notas', 'nome', 'sobrenome'];
+    const allowedFields = ['status', 'notas', 'nome', 'sobrenome', 'origem'];
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
@@ -153,6 +153,26 @@ app.patch('/api/leads/:id', requireAuth, async (req, res) => {
     if (error) throw error;
 
     res.json({ data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/leads/:id — exclui o lead (confirmado no frontend antes de chamar)
+app.delete('/api/leads/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error, count } = await supabase
+      .from('leads')
+      .delete({ count: 'exact' })
+      .eq('id', id)
+      .eq('instance', req.instance);
+    if (error) throw error;
+    if (!count) {
+      return res.status(404).json({ error: 'Lead não encontrado.' });
+    }
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

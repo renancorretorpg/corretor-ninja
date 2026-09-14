@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { ListaLeads } from './ListaLeads';
 import { KanbanLeads } from './KanbanLeads';
 import { Filtros } from './Filtros';
+import { LeadDetailModal } from './LeadDetailModal';
 import { Button } from './ui';
+import type { Lead } from '../types';
 
 type Modo = 'lista' | 'kanban';
 
@@ -18,6 +20,7 @@ export function LeadsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [origem, setOrigem] = useState('');
+  const [leadSelecionado, setLeadSelecionado] = useState<Lead | null>(null);
 
   function trocarModo(novoModo: Modo) {
     setModo(novoModo);
@@ -46,10 +49,12 @@ export function LeadsPage() {
       </div>
 
       {modo === 'lista' ? (
-        <ListaLeads status={status} origem={origem} search={search} />
+        <ListaLeads status={status} origem={origem} search={search} onSelectLead={setLeadSelecionado} />
       ) : (
-        <KanbanLeads status={status} origem={origem} search={search} />
+        <KanbanLeads status={status} origem={origem} search={search} onSelectLead={setLeadSelecionado} />
       )}
+
+      <LeadDetailModal lead={leadSelecionado} onClose={() => setLeadSelecionado(null)} />
     </div>
   );
 }
