@@ -19,10 +19,12 @@ type Aba = 'nova' | 'historico';
 type Etapa = 1 | 2 | 3 | 4 | 5;
 
 function statusBadge(status: Campanha['status']) {
-  const map: Record<Campanha['status'], { label: string; tone: 'default' | 'success' | 'warning' | 'muted' }> = {
+  const map: Record<Campanha['status'], { label: string; tone: 'default' | 'success' | 'warning' | 'muted' | 'danger' }> = {
     pendente_envio: { label: 'Pendente de envio', tone: 'warning' },
     agendada: { label: 'Agendada', tone: 'default' },
+    enviando: { label: 'Enviando...', tone: 'default' },
     enviada: { label: 'Enviada', tone: 'success' },
+    erro: { label: 'Erro', tone: 'danger' },
     cancelada: { label: 'Cancelada', tone: 'muted' },
   };
   const { label, tone } = map[status];
@@ -512,10 +514,13 @@ function HistoricoCampanhas() {
                 : `Agendada para ${formatDataHora(c.agendamento_data)}`}{' '}
               · criada em {formatDataHora(c.created_at)}
             </p>
+            {c.status === 'erro' && c.erro_mensagem && (
+              <p className="mt-1 text-xs text-red-600">{c.erro_mensagem}</p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {statusBadge(c.status)}
-            {(c.status === 'pendente_envio' || c.status === 'agendada') && (
+            {(c.status === 'pendente_envio' || c.status === 'agendada' || c.status === 'enviando') && (
               <Button
                 variant="ghost"
                 className="text-red-600 hover:bg-red-50"

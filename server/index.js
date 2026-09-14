@@ -9,6 +9,10 @@ const {
   PANEL_INSTANCE = 'Renan',
   DRIVE_CAMPAIGN_FOLDER_ID,
   GOOGLE_DRIVE_API_KEY,
+  N8N_DISPARO_WEBHOOK_URL,
+  N8N_COPIAR_IMAGENS_WEBHOOK_URL,
+  N8N_CANCELAR_WEBHOOK_URL,
+  N8N_WEBHOOK_SECRET,
   PORT = 8090,
 } = process.env;
 
@@ -375,10 +379,13 @@ const MAX_IMAGENS = 4;
 
 async function contarDestinatarios({ modo, etapa, leadIds }) {
   if (modo === 'todos') {
+    // Exclui 'inativo' igual ao disparo real (Filtrar Alvo Específico no n8n),
+    // senao a contagem do wizard fica maior que o numero real de envios.
     const { count, error } = await supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE);
+      .eq('instance', PANEL_INSTANCE)
+      .neq('status', 'inativo');
     if (error) throw error;
     return count ?? 0;
   }
@@ -404,6 +411,88 @@ async function contarDestinatarios({ modo, etapa, leadIds }) {
     return count ?? 0;
   }
   return 0;
+}
+
+// Igual a contarDestinatarios, mas devolve os registros (id, nome, numero)
+// em vez de so a contagem -- usado na hora de montar os "alvos" do disparo real.
+async function resolverDestinatariosCompletos({ modo, etapa, leadIds }) {
+  let query = supabase.from('leads').select('id, nome, numero').eq('instance', PANEL_INSTANCE);
+  if (modo === 'todos') {
+    query = query.neq('status', 'inativo');
+  } else if (modo === 'etapa') {
+    if (!etapa) return [];
+    query = query.eq('status', etapa);
+  } else if (modo === 'manual') {
+    const ids = Array.isArray(leadIds) ? leadIds : [];
+    if (ids.length === 0) return [];
+    query = query.in('id', ids);
+  } else {
+    return [];
+  }
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+async function fetchComTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Copia as imagens escolhidas no wizard para uma subpasta propria da campanha
+// no Drive (via workflow n8n dedicado, que tem a credencial OAuth2 de escrita).
+// Trava as fotos no momento da criacao: se o corretor trocar as fotos da pasta
+// compartilhada via WhatsApp depois, uma campanha agendada nao e afetada.
+async function copiarImagensCampanha({ campanhaId, instance, fileIds }) {
+  const resp = await fetchComTimeout(N8N_COPIAR_IMAGENS_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+    body: JSON.stringify({ campanha_id: campanhaId, instance, file_ids: fileIds }),
+  }, 15000);
+  if (!resp.ok) throw new Error(`Falha ao copiar imagens (n8n respondeu ${resp.status}).`);
+  return resp.json();
+}
+
+// Aciona o disparo real via webhook n8n (workflow "Disparo de Mensagens [CORE]").
+// Compartilhada entre o POST /api/campanhas (envio imediato) e o scheduler
+// (campanhas agendadas).
+async function dispararCampanha(campanha) {
+  try {
+    const destinatarios = await resolverDestinatariosCompletos({
+      modo: campanha.destinatarios_modo,
+      etapa: campanha.destinatarios_etapa,
+      leadIds: campanha.destinatarios_lead_ids,
+    });
+    const alvos = campanha.destinatarios_modo === 'todos' ? [] : destinatarios.map((l) => l.numero);
+
+    const resp = await fetchComTimeout(N8N_DISPARO_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+      body: JSON.stringify({
+        origem: 'painel',
+        instance: campanha.instance,
+        campanha_id: campanha.id,
+        mensagens: campanha.mensagens,
+        pasta_imagens_id: campanha.drive_pasta_campanha_id,
+        alvos,
+      }),
+    }, 10000);
+    if (!resp.ok) throw new Error(`n8n respondeu ${resp.status}`);
+
+    await supabase.from('campanhas')
+      .update({ status: 'enviando', updated_at: new Date().toISOString() })
+      .eq('id', campanha.id);
+  } catch (err) {
+    console.error(`Falha ao disparar campanha ${campanha.id}:`, err);
+    await supabase.from('campanhas')
+      .update({ status: 'erro', erro_mensagem: err.message, updated_at: new Date().toISOString() })
+      .eq('id', campanha.id);
+  }
 }
 
 // GET /api/campanhas/imagens — lista as imagens disponiveis na pasta do Drive
@@ -527,11 +616,80 @@ app.post('/api/campanhas', async (req, res) => {
       .single();
     if (error) throw error;
 
-    res.status(201).json({ data });
+    // Trava as fotos escolhidas numa subpasta propria da campanha (nao afeta
+    // a pasta compartilhada usada pelo fluxo de WhatsApp), e ja dispara na
+    // hora se for imediato. Se a copia falhar, a campanha fica com status
+    // 'erro' em vez de sumir, pra ficar visivel no historico.
+    try {
+      const { folder_id, files } = await copiarImagensCampanha({
+        campanhaId: data.id,
+        instance: PANEL_INSTANCE,
+        fileIds: imagens.map((i) => i.id),
+      });
+      const imagensAtualizadas = files.map((f) => ({
+        id: f.id,
+        nome: f.nome,
+        url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`,
+      }));
+
+      const { data: atualizada, error: updateError } = await supabase
+        .from('campanhas')
+        .update({
+          drive_pasta_campanha_id: folder_id,
+          imagens: imagensAtualizadas,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', data.id)
+        .select()
+        .single();
+      if (updateError) throw updateError;
+
+      if (agendamentoTipo === 'imediato') {
+        await dispararCampanha(atualizada);
+      }
+
+      const { data: final, error: finalError } = await supabase
+        .from('campanhas')
+        .select()
+        .eq('id', data.id)
+        .single();
+      if (finalError) throw finalError;
+
+      return res.status(201).json({ data: final });
+    } catch (prepErr) {
+      console.error(`Falha ao preparar imagens da campanha ${data.id}:`, prepErr);
+      await supabase
+        .from('campanhas')
+        .update({ status: 'erro', erro_mensagem: `Falha ao copiar imagens: ${prepErr.message}` })
+        .eq('id', data.id);
+      return res.status(500).json({
+        error: 'Campanha criada, mas falhou ao preparar as imagens. Veja o histórico.',
+        data,
+      });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// PATCH /api/campanhas/:id/status — callback do n8n quando o disparo termina
+// (ou falha). Protegido pelo mesmo segredo compartilhado do webhook.
+app.patch('/api/campanhas/:id/status', async (req, res) => {
+  if (req.headers['x-webhook-secret'] !== N8N_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: 'Não autorizado.' });
+  }
+  const { status, erro_mensagem: erroMensagem } = req.body;
+  if (!['enviada', 'erro'].includes(status)) {
+    return res.status(400).json({ error: 'Status inválido.' });
+  }
+  const updates = { status, updated_at: new Date().toISOString() };
+  if (status === 'enviada') updates.enviado_em = new Date().toISOString();
+  if (erroMensagem) updates.erro_mensagem = erroMensagem;
+
+  const { error } = await supabase.from('campanhas').update(updates).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // DELETE /api/campanhas/:id — cancela uma campanha ainda nao enviada
@@ -549,6 +707,22 @@ app.delete('/api/campanhas/:id', async (req, res) => {
     }
     if (campanha.status === 'enviada') {
       return res.status(400).json({ error: 'Campanha já enviada não pode ser cancelada.' });
+    }
+
+    // Se ja esta em andamento, avisa o n8n pra interromper de verdade o envio
+    // (mesma flag que o comando PARAR do WhatsApp usa) antes de marcar
+    // cancelada no banco. Best-effort: se o webhook falhar, ainda assim
+    // cancela no painel e loga o problema.
+    if (campanha.status === 'enviando' && N8N_CANCELAR_WEBHOOK_URL) {
+      try {
+        await fetchComTimeout(N8N_CANCELAR_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+          body: JSON.stringify({ instance: PANEL_INSTANCE }),
+        }, 10000);
+      } catch (cancelErr) {
+        console.error(`Falha ao avisar o n8n para cancelar a campanha ${id}:`, cancelErr);
+      }
     }
 
     const { error } = await supabase
@@ -575,6 +749,37 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(distPath));
   app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
 }
+
+// Verifica a cada minuto se alguma campanha agendada venceu. A atualizacao
+// condicional (eq('status','agendada')) funciona como uma trava otimista:
+// so processa quem essa mesma chamada conseguiu "reservar", evitando duplo
+// disparo se um tick anterior ainda estiver rodando.
+const SCHEDULER_INTERVAL_MS = 60 * 1000;
+async function processarCampanhasAgendadas() {
+  try {
+    const { data: pendentes, error } = await supabase
+      .from('campanhas')
+      .select()
+      .eq('instance', PANEL_INSTANCE)
+      .eq('status', 'agendada')
+      .lte('agendamento_data', new Date().toISOString());
+    if (error) throw error;
+
+    for (const campanha of pendentes || []) {
+      const { data: reservada } = await supabase
+        .from('campanhas')
+        .update({ status: 'enviando', updated_at: new Date().toISOString() })
+        .eq('id', campanha.id)
+        .eq('status', 'agendada')
+        .select()
+        .single();
+      if (reservada) await dispararCampanha(reservada);
+    }
+  } catch (err) {
+    console.error('Erro no scheduler de campanhas:', err);
+  }
+}
+setInterval(processarCampanhasAgendadas, SCHEDULER_INTERVAL_MS);
 
 app.listen(PORT, () => {
   console.log(`Painel de Leads rodando na porta ${PORT} (instance=${PANEL_INSTANCE})`);

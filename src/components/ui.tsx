@@ -32,12 +32,13 @@ export function Select({ className = '', ...props }: SelectHTMLAttributes<HTMLSe
   );
 }
 
-export function Badge({ children, tone = 'default' }: { children: React.ReactNode; tone?: 'default' | 'success' | 'warning' | 'muted' }) {
+export function Badge({ children, tone = 'default' }: { children: React.ReactNode; tone?: 'default' | 'success' | 'warning' | 'muted' | 'danger' }) {
   const tones = {
     default: 'bg-primary/10 text-primary',
     success: 'bg-emerald-100 text-emerald-700',
     warning: 'bg-amber-100 text-amber-800',
     muted: 'bg-muted text-muted-foreground',
+    danger: 'bg-red-100 text-red-700',
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>

@@ -45,7 +45,7 @@ export interface ImagemDrive {
 
 export type DestinatariosModo = 'todos' | 'etapa' | 'manual';
 export type AgendamentoTipo = 'imediato' | 'agendado';
-export type CampanhaStatus = 'pendente_envio' | 'agendada' | 'enviada' | 'cancelada';
+export type CampanhaStatus = 'pendente_envio' | 'agendada' | 'enviando' | 'enviada' | 'erro' | 'cancelada';
 
 export interface Campanha {
   id: number;
@@ -60,6 +60,9 @@ export interface Campanha {
   agendamento_tipo: AgendamentoTipo;
   agendamento_data: string | null;
   status: CampanhaStatus;
+  drive_pasta_campanha_id: string | null;
+  erro_mensagem: string | null;
+  enviado_em: string | null;
   created_at: string;
   updated_at: string;
 }

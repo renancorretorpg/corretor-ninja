@@ -193,7 +193,9 @@ export function useCreateCampanha() {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campanhas'] }),
+    // Mesmo quando falha (ex.: erro ao copiar imagens), a campanha pode ter
+    // sido criada com status 'erro' -- atualiza o histórico pra ela aparecer.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['campanhas'] }),
   });
 }
 
