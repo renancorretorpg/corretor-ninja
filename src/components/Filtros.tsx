@@ -1,5 +1,5 @@
 import { Input, Select } from './ui';
-import { useOrigens, useStatuses } from '../api';
+import { useEtapas, useOrigens } from '../api';
 
 interface FiltrosProps {
   search: string;
@@ -11,7 +11,7 @@ interface FiltrosProps {
 }
 
 export function Filtros({ search, onSearchChange, status, onStatusChange, origem, onOrigemChange }: FiltrosProps) {
-  const { data: statusesData } = useStatuses();
+  const { data: etapasData } = useEtapas();
   const { data: origensData } = useOrigens();
 
   return (
@@ -24,9 +24,9 @@ export function Filtros({ search, onSearchChange, status, onStatusChange, origem
       />
       <Select value={status} onChange={(e) => onStatusChange(e.target.value)}>
         <option value="">Todas as etapas</option>
-        {statusesData?.statuses.map((s) => (
-          <option key={s} value={s}>
-            {s}
+        {etapasData?.data.map((e) => (
+          <option key={e.id} value={e.nome}>
+            {e.nome}
           </option>
         ))}
       </Select>

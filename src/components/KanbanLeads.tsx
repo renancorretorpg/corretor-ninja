@@ -10,8 +10,8 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { useDraggable } from '@dnd-kit/core';
-import { useAllLeadsForKanban, useStatuses, useUpdateLead } from '../api';
-import type { Lead } from '../types';
+import { useAllLeadsForKanban, useEtapas, useUpdateLead } from '../api';
+import type { Etapa, Lead } from '../types';
 import { Card } from './ui';
 import { formatTelefone } from '../utils';
 
@@ -50,8 +50,8 @@ function LeadCard({ lead }: { lead: Lead }) {
   );
 }
 
-function Coluna({ status, leads }: { status: string; leads: Lead[] }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status });
+function Coluna({ etapa, leads }: { etapa: Etapa | { nome: string; cor: string | null }; leads: Lead[] }) {
+  const { setNodeRef, isOver } = useDroppable({ id: etapa.nome });
 
   return (
     <div
@@ -59,7 +59,13 @@ function Coluna({ status, leads }: { status: string; leads: Lead[] }) {
       className={`flex w-72 shrink-0 flex-col rounded-lg border border-border bg-muted/30 p-3 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
     >
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold capitalize">{status}</h3>
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <span
+            className="h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: etapa.cor ?? '#94a3b8' }}
+          />
+          {etapa.nome}
+        </h3>
         <span className="text-xs text-muted-foreground">{leads.length}</span>
       </div>
       <div className="min-h-[80px] flex-1">
@@ -78,21 +84,21 @@ export function KanbanLeads({ status, origem, search }: KanbanLeadsProps) {
     origem: origem || undefined,
     search: search || undefined,
   });
-  const { data: statusesData } = useStatuses();
+  const { data: etapasData } = useEtapas();
   const updateLead = useUpdateLead();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const colunas = useMemo(() => {
-    const statuses = statusesData?.statuses ?? [];
-    const map = new Map<string, Lead[]>();
-    for (const s of statuses) map.set(s, []);
+    const etapas = etapasData?.data ?? [];
+    const map = new Map<string, { etapa: Etapa | { nome: string; cor: string | null }; leads: Lead[] }>();
+    for (const etapa of etapas) map.set(etapa.nome, { etapa, leads: [] });
     for (const lead of data?.data ?? []) {
-      if (!map.has(lead.status)) map.set(lead.status, []);
-      map.get(lead.status)!.push(lead);
+      if (!map.has(lead.status)) map.set(lead.status, { etapa: { nome: lead.status, cor: null }, leads: [] });
+      map.get(lead.status)!.leads.push(lead);
     }
-    return Array.from(map.entries());
-  }, [data, statusesData]);
+    return Array.from(map.values());
+  }, [data, etapasData]);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveLead((event.active.data.current?.lead as Lead) ?? null);
@@ -118,8 +124,8 @@ export function KanbanLeads({ status, origem, search }: KanbanLeadsProps) {
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex gap-3 overflow-x-auto pb-2">
-        {colunas.map(([statusCol, leads]) => (
-          <Coluna key={statusCol} status={statusCol} leads={leads} />
+        {colunas.map(({ etapa, leads }) => (
+          <Coluna key={etapa.nome} etapa={etapa} leads={leads} />
         ))}
       </div>
       <DragOverlay>{activeLead ? <LeadCard lead={activeLead} /> : null}</DragOverlay>

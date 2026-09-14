@@ -26,6 +26,17 @@ export interface LeadsResponse {
   pageSize: number;
 }
 
+export interface Etapa {
+  id: number;
+  instance: string;
+  nome: string;
+  cor: string | null;
+  ordem: number;
+  leadCount: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface LeadsFilters {
   page: number;
   pageSize: number;

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Lead, LeadsFilters, LeadsResponse } from './types';
+import type { Etapa, Lead, LeadsFilters, LeadsResponse } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -71,5 +71,67 @@ export function useUpdateLead() {
       queryClient.invalidateQueries({ queryKey: ['leads-kanban'] });
       queryClient.invalidateQueries({ queryKey: ['statuses'] });
     },
+  });
+}
+
+export function useEtapas() {
+  return useQuery({
+    queryKey: ['etapas'],
+    queryFn: () => fetchJson<{ data: Etapa[] }>('/api/etapas'),
+  });
+}
+
+function invalidateEtapas(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['etapas'] });
+  queryClient.invalidateQueries({ queryKey: ['leads'] });
+  queryClient.invalidateQueries({ queryKey: ['leads-kanban'] });
+  queryClient.invalidateQueries({ queryKey: ['statuses'] });
+}
+
+export function useCreateEtapa() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { nome: string; cor?: string }) =>
+      fetchJson<{ data: Etapa }>('/api/etapas', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => invalidateEtapas(queryClient),
+  });
+}
+
+export function useUpdateEtapa() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, updates }: { id: number; updates: { nome?: string; cor?: string } }) =>
+      fetchJson<{ data: Etapa }>(`/api/etapas/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      }),
+    onSuccess: () => invalidateEtapas(queryClient),
+  });
+}
+
+export function useReorderEtapas() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (itens: { id: number; ordem: number }[]) =>
+      fetchJson<{ ok: true }>('/api/etapas/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ itens }),
+      }),
+    onSuccess: () => invalidateEtapas(queryClient),
+  });
+}
+
+export function useDeleteEtapa() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, moveTo }: { id: number; moveTo?: string }) =>
+      fetchJson<{ ok: true }>(`/api/etapas/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ moveTo }),
+      }),
+    onSuccess: () => invalidateEtapas(queryClient),
   });
 }

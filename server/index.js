@@ -125,6 +125,249 @@ app.patch('/api/leads/:id', async (req, res) => {
   }
 });
 
+const MAX_ETAPAS = 12;
+const PALETA_CORES = [
+  '#64748b', '#3b82f6', '#f59e0b', '#8b5cf6',
+  '#10b981', '#ef4444', '#06b6d4', '#ec4899',
+  '#84cc16', '#f97316', '#6366f1', '#14b8a6',
+];
+
+async function contarLeadsPorStatus() {
+  const { data, error } = await supabase
+    .from('leads')
+    .select('status')
+    .eq('instance', PANEL_INSTANCE);
+  if (error) throw error;
+  const contagem = {};
+  for (const row of data) {
+    if (!row.status) continue;
+    contagem[row.status] = (contagem[row.status] || 0) + 1;
+  }
+  return contagem;
+}
+
+// GET /api/etapas — lista ordenada; na primeira vez (tabela vazia), semeia
+// a partir dos status ja em uso nos leads, pra nao comecar do zero vazio.
+app.get('/api/etapas', async (_req, res) => {
+  try {
+    let { data: etapas, error } = await supabase
+      .from('etapas')
+      .select('*')
+      .eq('instance', PANEL_INSTANCE)
+      .order('ordem', { ascending: true });
+    if (error) throw error;
+
+    if (etapas.length === 0) {
+      const contagem = await contarLeadsPorStatus();
+      const nomes = Object.keys(contagem);
+      if (nomes.length > 0) {
+        const novasEtapas = nomes.map((nome, i) => ({
+          instance: PANEL_INSTANCE,
+          nome,
+          cor: PALETA_CORES[i % PALETA_CORES.length],
+          ordem: i + 1,
+        }));
+        const { data: inseridas, error: insertError } = await supabase
+          .from('etapas')
+          .insert(novasEtapas)
+          .select();
+        if (insertError) throw insertError;
+        etapas = inseridas.sort((a, b) => a.ordem - b.ordem);
+      }
+    }
+
+    const contagem = await contarLeadsPorStatus();
+    const comContagem = etapas.map((e) => ({ ...e, leadCount: contagem[e.nome] || 0 }));
+    res.json({ data: comContagem });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/etapas — cria nova etapa (nome, cor opcional)
+app.post('/api/etapas', async (req, res) => {
+  try {
+    const nome = (req.body.nome || '').trim();
+    if (!nome) {
+      return res.status(400).json({ error: 'Nome da etapa é obrigatório.' });
+    }
+
+    const { count, error: countError } = await supabase
+      .from('etapas')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', PANEL_INSTANCE);
+    if (countError) throw countError;
+    if ((count ?? 0) >= MAX_ETAPAS) {
+      return res.status(400).json({ error: `Limite de ${MAX_ETAPAS} etapas atingido.` });
+    }
+
+    const { data: existente } = await supabase
+      .from('etapas')
+      .select('id')
+      .eq('instance', PANEL_INSTANCE)
+      .ilike('nome', nome)
+      .maybeSingle();
+    if (existente) {
+      return res.status(409).json({ error: 'Já existe uma etapa com esse nome.' });
+    }
+
+    const { data: maxOrdemRow } = await supabase
+      .from('etapas')
+      .select('ordem')
+      .eq('instance', PANEL_INSTANCE)
+      .order('ordem', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ordem = (maxOrdemRow?.ordem ?? 0) + 1;
+
+    const { data, error } = await supabase
+      .from('etapas')
+      .insert({ instance: PANEL_INSTANCE, nome, cor: req.body.cor || null, ordem })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ data: { ...data, leadCount: 0 } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/etapas/:id — edita nome/cor; renomear atualiza em cascata
+// o status dos leads que estavam na etapa antiga (nao ha FK, e texto livre).
+app.patch('/api/etapas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: atual, error: fetchError } = await supabase
+      .from('etapas')
+      .select('*')
+      .eq('id', id)
+      .eq('instance', PANEL_INSTANCE)
+      .single();
+    if (fetchError || !atual) {
+      return res.status(404).json({ error: 'Etapa não encontrada.' });
+    }
+
+    const updates = { updated_at: new Date().toISOString() };
+    const novoNome = req.body.nome !== undefined ? req.body.nome.trim() : undefined;
+
+    if (novoNome && novoNome !== atual.nome) {
+      const { data: existente } = await supabase
+        .from('etapas')
+        .select('id')
+        .eq('instance', PANEL_INSTANCE)
+        .neq('id', id)
+        .ilike('nome', novoNome)
+        .maybeSingle();
+      if (existente) {
+        return res.status(409).json({ error: 'Já existe uma etapa com esse nome.' });
+      }
+      updates.nome = novoNome;
+    }
+    if (req.body.cor !== undefined) {
+      updates.cor = req.body.cor;
+    }
+
+    const { data, error } = await supabase
+      .from('etapas')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+
+    if (updates.nome) {
+      const { error: cascadeError } = await supabase
+        .from('leads')
+        .update({ status: updates.nome, updated_at: new Date().toISOString() })
+        .eq('instance', PANEL_INSTANCE)
+        .eq('status', atual.nome);
+      if (cascadeError) throw cascadeError;
+    }
+
+    res.json({ data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/etapas/reorder — recebe [{id, ordem}] apos drag-and-drop
+app.post('/api/etapas/reorder', async (req, res) => {
+  try {
+    const itens = req.body.itens;
+    if (!Array.isArray(itens)) {
+      return res.status(400).json({ error: 'Formato inválido.' });
+    }
+    await Promise.all(
+      itens.map(({ id, ordem }) =>
+        supabase.from('etapas').update({ ordem }).eq('id', id).eq('instance', PANEL_INSTANCE),
+      ),
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/etapas/:id?moveTo=<nome> — remove uma etapa. Se houver leads
+// nela, exige moveTo (etapa destino) ou responde 409 com a contagem pro
+// frontend perguntar antes de a gente perder a etapa desses leads.
+app.delete('/api/etapas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: etapa, error: fetchError } = await supabase
+      .from('etapas')
+      .select('*')
+      .eq('id', id)
+      .eq('instance', PANEL_INSTANCE)
+      .single();
+    if (fetchError || !etapa) {
+      return res.status(404).json({ error: 'Etapa não encontrada.' });
+    }
+
+    const { count, error: countError } = await supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', PANEL_INSTANCE)
+      .eq('status', etapa.nome);
+    if (countError) throw countError;
+
+    const moveTo = req.body?.moveTo;
+    if ((count ?? 0) > 0) {
+      if (!moveTo) {
+        return res.status(409).json({ error: 'Etapa possui leads.', leadCount: count });
+      }
+      const { data: destino } = await supabase
+        .from('etapas')
+        .select('id')
+        .eq('instance', PANEL_INSTANCE)
+        .eq('nome', moveTo)
+        .maybeSingle();
+      if (!destino) {
+        return res.status(400).json({ error: 'Etapa de destino inválida.' });
+      }
+      const { error: moveError } = await supabase
+        .from('leads')
+        .update({ status: moveTo, updated_at: new Date().toISOString() })
+        .eq('instance', PANEL_INSTANCE)
+        .eq('status', etapa.nome);
+      if (moveError) throw moveError;
+    }
+
+    const { error: deleteError } = await supabase.from('etapas').delete().eq('id', id);
+    if (deleteError) throw deleteError;
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', (_req, res) => res.json({ ok: true, instance: PANEL_INSTANCE }));
 
 // Em producao, serve o build estatico do React
