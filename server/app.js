@@ -876,6 +876,73 @@ app.patch('/api/campanhas/:id/status', async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/campanhas/from-whatsapp — cria uma campanha agendada a partir do
+// bot do WhatsApp (comando "agenda o disparo pra..."). Protegido pelo mesmo
+// segredo compartilhado do webhook (o corretor ja se autenticou no WhatsApp
+// pelo numero, nao tem sessao de painel aqui). As mensagens vem prontas do
+// n8n (config mensagens_disparo do cliente); sem imagens proprias -- usa a
+// pasta compartilhada de teasers no envio, igual ao disparo imediato do bot.
+app.post('/api/campanhas/from-whatsapp', async (req, res) => {
+  if (req.headers['x-webhook-secret'] !== N8N_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: 'Não autorizado.' });
+  }
+  try {
+    const instance = (req.body.instance || '').toString().trim();
+    if (!instance) {
+      return res.status(400).json({ error: 'instance é obrigatória.' });
+    }
+
+    const mensagens = (req.body.mensagens || []).map((m) => String(m).trim()).filter(Boolean);
+    if (mensagens.length === 0) {
+      return res.status(400).json({ error: 'Nenhuma mensagem de campanha configurada.' });
+    }
+
+    const modo = req.body.destinatarios_modo;
+    if (!['todos', 'etapa'].includes(modo)) {
+      return res.status(400).json({ error: 'Forma de seleção de destinatários inválida.' });
+    }
+    const etapa = req.body.destinatarios_etapa || null;
+    if (modo === 'etapa' && !etapa) {
+      return res.status(400).json({ error: 'Etapa de destino é obrigatória.' });
+    }
+
+    const agendamentoData = req.body.agendamento_data;
+    if (!agendamentoData || new Date(agendamentoData) <= new Date()) {
+      return res.status(400).json({ error: 'Escolha uma data/hora futura para o agendamento.' });
+    }
+
+    const count = await contarDestinatarios({ modo, etapa, instance });
+    if (count === 0) {
+      return res.status(400).json({ error: 'Nenhum destinatário encontrado com essa seleção.' });
+    }
+
+    const nome = `Campanha via WhatsApp ${new Date().toLocaleDateString('pt-BR')}`;
+    const { data, error } = await supabase
+      .from('campanhas')
+      .insert({
+        instance,
+        nome,
+        mensagens,
+        imagens: [],
+        destinatarios_modo: modo,
+        destinatarios_etapa: etapa,
+        destinatarios_lead_ids: null,
+        destinatarios_count: count,
+        agendamento_tipo: 'agendado',
+        agendamento_data: agendamentoData,
+        status: 'agendada',
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
 // DELETE /api/campanhas/:id — cancela uma campanha ainda nao enviada
 app.delete('/api/campanhas/:id', requireAuth, async (req, res) => {
   try {
