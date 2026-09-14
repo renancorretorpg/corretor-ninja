@@ -14,6 +14,8 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
   const [status, setStatus] = useState('');
   const [origem, setOrigem] = useState('');
   const [notas, setNotas] = useState('');
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [textoExclusao, setTextoExclusao] = useState('');
 
   useEffect(() => {
     if (lead) {
@@ -22,6 +24,8 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
       setStatus(lead.status ?? '');
       setOrigem(lead.origem ?? '');
       setNotas(lead.notas ?? '');
+      setConfirmandoExclusao(false);
+      setTextoExclusao('');
     }
   }, [lead]);
 
@@ -38,11 +42,39 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
     onClose();
   }
 
-  function handleExcluir() {
-    if (!lead) return;
-    const confirmacao = window.prompt('Para excluir este lead, digite EXCLUIR:');
-    if (confirmacao !== 'EXCLUIR') return;
+  function confirmarExclusao() {
+    if (!lead || textoExclusao !== 'EXCLUIR') return;
     deleteLead.mutate(lead.id, { onSuccess: onClose });
+  }
+
+  if (confirmandoExclusao) {
+    return (
+      <Modal open={!!lead} onClose={onClose} title={`Excluir ${lead.nome}?`} maxWidth="max-w-lg">
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Essa ação não pode ser desfeita. Pra confirmar, digite <strong>EXCLUIR</strong> abaixo.
+          </p>
+          <Input
+            value={textoExclusao}
+            onChange={(e) => setTextoExclusao(e.target.value)}
+            placeholder="EXCLUIR"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setConfirmandoExclusao(false)}>
+              Voltar
+            </Button>
+            <Button
+              className="bg-red-600 text-white hover:opacity-90"
+              onClick={confirmarExclusao}
+              disabled={textoExclusao !== 'EXCLUIR' || deleteLead.isPending}
+            >
+              Excluir lead
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
   }
 
   return (
@@ -118,7 +150,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           <Button
             variant="ghost"
             className="text-red-600 hover:bg-red-50"
-            onClick={handleExcluir}
+            onClick={() => setConfirmandoExclusao(true)}
             disabled={deleteLead.isPending}
           >
             Excluir lead
