@@ -6,8 +6,6 @@ import { createClient } from '@supabase/supabase-js';
 const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
-  PANEL_INSTANCE = 'Renan',
-  DRIVE_CAMPAIGN_FOLDER_ID,
   GOOGLE_DRIVE_API_KEY,
   N8N_DISPARO_WEBHOOK_URL,
   N8N_COPIAR_IMAGENS_WEBHOOK_URL,
@@ -29,10 +27,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Valida a sessao Supabase (Authorization: Bearer <token>) e resolve qual
+// corretor ela e via corretor_perfis. Mesmo padrao do painel antigo hospedado
+// no n8n (getUser contra o Auth do Supabase + lookup por user_id).
+async function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Não autenticado.' });
+  }
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData?.user) {
+    return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
+  }
+  const { data: perfil, error: perfilError } = await supabase
+    .from('corretor_perfis')
+    .select('instance, drive_pasta_teasers')
+    .eq('user_id', userData.user.id)
+    .maybeSingle();
+  if (perfilError || !perfil) {
+    return res.status(403).json({ error: 'Conta não vinculada a nenhum corretor.' });
+  }
+  req.instance = perfil.instance;
+  req.driveFolder = perfil.drive_pasta_teasers;
+  req.user = userData.user;
+  next();
+}
+
 const ALLOWED_SORT_COLUMNS = new Set(['nome', 'status', 'origem', 'created_at', 'updated_at']);
 
 // GET /api/leads?page=1&pageSize=25&status=&origem=&search=&sortBy=created_at&sortDir=desc
-app.get('/api/leads', async (req, res) => {
+app.get('/api/leads', requireAuth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
@@ -42,7 +67,7 @@ app.get('/api/leads', async (req, res) => {
     let query = supabase
       .from('leads')
       .select('*', { count: 'exact' })
-      .eq('instance', PANEL_INSTANCE);
+      .eq('instance', req.instance);
 
     if (req.query.status) {
       query = query.eq('status', req.query.status);
@@ -70,12 +95,12 @@ app.get('/api/leads', async (req, res) => {
 });
 
 // GET /api/leads/statuses — distinct status values presentes na base (etapas ainda nao tem tabela propria)
-app.get('/api/leads/statuses', async (_req, res) => {
+app.get('/api/leads/statuses', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('leads')
       .select('status')
-      .eq('instance', PANEL_INSTANCE);
+      .eq('instance', req.instance);
     if (error) throw error;
     const statuses = Array.from(new Set(data.map((r) => r.status).filter(Boolean)));
     res.json({ statuses });
@@ -86,12 +111,12 @@ app.get('/api/leads/statuses', async (_req, res) => {
 });
 
 // GET /api/leads/origens — distinct origem values, para o filtro
-app.get('/api/leads/origens', async (_req, res) => {
+app.get('/api/leads/origens', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('leads')
       .select('origem')
-      .eq('instance', PANEL_INSTANCE);
+      .eq('instance', req.instance);
     if (error) throw error;
     const origens = Array.from(new Set(data.map((r) => r.origem).filter(Boolean)));
     res.json({ origens });
@@ -102,7 +127,7 @@ app.get('/api/leads/origens', async (_req, res) => {
 });
 
 // PATCH /api/leads/:id — usado pelo Kanban (mudar status) e edicao pontual
-app.patch('/api/leads/:id', async (req, res) => {
+app.patch('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const allowedFields = ['status', 'notas', 'nome', 'sobrenome'];
@@ -119,7 +144,7 @@ app.patch('/api/leads/:id', async (req, res) => {
       .from('leads')
       .update(updates)
       .eq('id', id)
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .select()
       .single();
     if (error) throw error;
@@ -138,11 +163,11 @@ const PALETA_CORES = [
   '#84cc16', '#f97316', '#6366f1', '#14b8a6',
 ];
 
-async function contarLeadsPorStatus() {
+async function contarLeadsPorStatus(instance) {
   const { data, error } = await supabase
     .from('leads')
     .select('status')
-    .eq('instance', PANEL_INSTANCE);
+    .eq('instance', instance);
   if (error) throw error;
   const contagem = {};
   for (const row of data) {
@@ -154,21 +179,21 @@ async function contarLeadsPorStatus() {
 
 // GET /api/etapas — lista ordenada; na primeira vez (tabela vazia), semeia
 // a partir dos status ja em uso nos leads, pra nao comecar do zero vazio.
-app.get('/api/etapas', async (_req, res) => {
+app.get('/api/etapas', requireAuth, async (req, res) => {
   try {
     let { data: etapas, error } = await supabase
       .from('etapas')
       .select('*')
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .order('ordem', { ascending: true });
     if (error) throw error;
 
     if (etapas.length === 0) {
-      const contagem = await contarLeadsPorStatus();
+      const contagem = await contarLeadsPorStatus(req.instance);
       const nomes = Object.keys(contagem);
       if (nomes.length > 0) {
         const novasEtapas = nomes.map((nome, i) => ({
-          instance: PANEL_INSTANCE,
+          instance: req.instance,
           nome,
           cor: PALETA_CORES[i % PALETA_CORES.length],
           ordem: i + 1,
@@ -182,7 +207,7 @@ app.get('/api/etapas', async (_req, res) => {
       }
     }
 
-    const contagem = await contarLeadsPorStatus();
+    const contagem = await contarLeadsPorStatus(req.instance);
     const comContagem = etapas.map((e) => ({ ...e, leadCount: contagem[e.nome] || 0 }));
     res.json({ data: comContagem });
   } catch (err) {
@@ -192,7 +217,7 @@ app.get('/api/etapas', async (_req, res) => {
 });
 
 // POST /api/etapas — cria nova etapa (nome, cor opcional)
-app.post('/api/etapas', async (req, res) => {
+app.post('/api/etapas', requireAuth, async (req, res) => {
   try {
     const nome = (req.body.nome || '').trim();
     if (!nome) {
@@ -202,7 +227,7 @@ app.post('/api/etapas', async (req, res) => {
     const { count, error: countError } = await supabase
       .from('etapas')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE);
+      .eq('instance', req.instance);
     if (countError) throw countError;
     if ((count ?? 0) >= MAX_ETAPAS) {
       return res.status(400).json({ error: `Limite de ${MAX_ETAPAS} etapas atingido.` });
@@ -211,7 +236,7 @@ app.post('/api/etapas', async (req, res) => {
     const { data: existente } = await supabase
       .from('etapas')
       .select('id')
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .ilike('nome', nome)
       .maybeSingle();
     if (existente) {
@@ -221,7 +246,7 @@ app.post('/api/etapas', async (req, res) => {
     const { data: maxOrdemRow } = await supabase
       .from('etapas')
       .select('ordem')
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .order('ordem', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -229,7 +254,7 @@ app.post('/api/etapas', async (req, res) => {
 
     const { data, error } = await supabase
       .from('etapas')
-      .insert({ instance: PANEL_INSTANCE, nome, cor: req.body.cor || null, ordem })
+      .insert({ instance: req.instance, nome, cor: req.body.cor || null, ordem })
       .select()
       .single();
     if (error) throw error;
@@ -243,14 +268,14 @@ app.post('/api/etapas', async (req, res) => {
 
 // PATCH /api/etapas/:id — edita nome/cor; renomear atualiza em cascata
 // o status dos leads que estavam na etapa antiga (nao ha FK, e texto livre).
-app.patch('/api/etapas/:id', async (req, res) => {
+app.patch('/api/etapas/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { data: atual, error: fetchError } = await supabase
       .from('etapas')
       .select('*')
       .eq('id', id)
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .single();
     if (fetchError || !atual) {
       return res.status(404).json({ error: 'Etapa não encontrada.' });
@@ -263,7 +288,7 @@ app.patch('/api/etapas/:id', async (req, res) => {
       const { data: existente } = await supabase
         .from('etapas')
         .select('id')
-        .eq('instance', PANEL_INSTANCE)
+        .eq('instance', req.instance)
         .neq('id', id)
         .ilike('nome', novoNome)
         .maybeSingle();
@@ -280,6 +305,7 @@ app.patch('/api/etapas/:id', async (req, res) => {
       .from('etapas')
       .update(updates)
       .eq('id', id)
+      .eq('instance', req.instance)
       .select()
       .single();
     if (error) throw error;
@@ -288,7 +314,7 @@ app.patch('/api/etapas/:id', async (req, res) => {
       const { error: cascadeError } = await supabase
         .from('leads')
         .update({ status: updates.nome, updated_at: new Date().toISOString() })
-        .eq('instance', PANEL_INSTANCE)
+        .eq('instance', req.instance)
         .eq('status', atual.nome);
       if (cascadeError) throw cascadeError;
     }
@@ -301,7 +327,7 @@ app.patch('/api/etapas/:id', async (req, res) => {
 });
 
 // POST /api/etapas/reorder — recebe [{id, ordem}] apos drag-and-drop
-app.post('/api/etapas/reorder', async (req, res) => {
+app.post('/api/etapas/reorder', requireAuth, async (req, res) => {
   try {
     const itens = req.body.itens;
     if (!Array.isArray(itens)) {
@@ -309,7 +335,7 @@ app.post('/api/etapas/reorder', async (req, res) => {
     }
     await Promise.all(
       itens.map(({ id, ordem }) =>
-        supabase.from('etapas').update({ ordem }).eq('id', id).eq('instance', PANEL_INSTANCE),
+        supabase.from('etapas').update({ ordem }).eq('id', id).eq('instance', req.instance),
       ),
     );
     res.json({ ok: true });
@@ -322,14 +348,14 @@ app.post('/api/etapas/reorder', async (req, res) => {
 // DELETE /api/etapas/:id?moveTo=<nome> — remove uma etapa. Se houver leads
 // nela, exige moveTo (etapa destino) ou responde 409 com a contagem pro
 // frontend perguntar antes de a gente perder a etapa desses leads.
-app.delete('/api/etapas/:id', async (req, res) => {
+app.delete('/api/etapas/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { data: etapa, error: fetchError } = await supabase
       .from('etapas')
       .select('*')
       .eq('id', id)
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .single();
     if (fetchError || !etapa) {
       return res.status(404).json({ error: 'Etapa não encontrada.' });
@@ -338,7 +364,7 @@ app.delete('/api/etapas/:id', async (req, res) => {
     const { count, error: countError } = await supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .eq('status', etapa.nome);
     if (countError) throw countError;
 
@@ -350,7 +376,7 @@ app.delete('/api/etapas/:id', async (req, res) => {
       const { data: destino } = await supabase
         .from('etapas')
         .select('id')
-        .eq('instance', PANEL_INSTANCE)
+        .eq('instance', req.instance)
         .eq('nome', moveTo)
         .maybeSingle();
       if (!destino) {
@@ -359,12 +385,16 @@ app.delete('/api/etapas/:id', async (req, res) => {
       const { error: moveError } = await supabase
         .from('leads')
         .update({ status: moveTo, updated_at: new Date().toISOString() })
-        .eq('instance', PANEL_INSTANCE)
+        .eq('instance', req.instance)
         .eq('status', etapa.nome);
       if (moveError) throw moveError;
     }
 
-    const { error: deleteError } = await supabase.from('etapas').delete().eq('id', id);
+    const { error: deleteError } = await supabase
+      .from('etapas')
+      .delete()
+      .eq('id', id)
+      .eq('instance', req.instance);
     if (deleteError) throw deleteError;
 
     res.json({ ok: true });
@@ -377,14 +407,14 @@ app.delete('/api/etapas/:id', async (req, res) => {
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
 
-async function contarDestinatarios({ modo, etapa, leadIds }) {
+async function contarDestinatarios({ modo, etapa, leadIds, instance }) {
   if (modo === 'todos') {
     // Exclui 'inativo' igual ao disparo real (Filtrar Alvo Específico no n8n),
     // senao a contagem do wizard fica maior que o numero real de envios.
     const { count, error } = await supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', instance)
       .neq('status', 'inativo');
     if (error) throw error;
     return count ?? 0;
@@ -394,7 +424,7 @@ async function contarDestinatarios({ modo, etapa, leadIds }) {
     const { count, error } = await supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', instance)
       .eq('status', etapa);
     if (error) throw error;
     return count ?? 0;
@@ -405,7 +435,7 @@ async function contarDestinatarios({ modo, etapa, leadIds }) {
     const { count, error } = await supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', instance)
       .in('id', ids);
     if (error) throw error;
     return count ?? 0;
@@ -415,8 +445,8 @@ async function contarDestinatarios({ modo, etapa, leadIds }) {
 
 // Igual a contarDestinatarios, mas devolve os registros (id, nome, numero)
 // em vez de so a contagem -- usado na hora de montar os "alvos" do disparo real.
-async function resolverDestinatariosCompletos({ modo, etapa, leadIds }) {
-  let query = supabase.from('leads').select('id, nome, numero').eq('instance', PANEL_INSTANCE);
+async function resolverDestinatariosCompletos({ modo, etapa, leadIds, instance }) {
+  let query = supabase.from('leads').select('id, nome, numero').eq('instance', instance);
   if (modo === 'todos') {
     query = query.neq('status', 'inativo');
   } else if (modo === 'etapa') {
@@ -467,6 +497,7 @@ async function dispararCampanha(campanha) {
       modo: campanha.destinatarios_modo,
       etapa: campanha.destinatarios_etapa,
       leadIds: campanha.destinatarios_lead_ids,
+      instance: campanha.instance,
     });
     const alvos = campanha.destinatarios_modo === 'todos' ? [] : destinatarios.map((l) => l.numero);
 
@@ -496,14 +527,15 @@ async function dispararCampanha(campanha) {
 }
 
 // GET /api/campanhas/imagens — lista as imagens disponiveis na pasta do Drive
-// do corretor. Exige GOOGLE_DRIVE_API_KEY + DRIVE_CAMPAIGN_FOLDER_ID configurados;
-// sem isso, devolve configurado:false pro frontend avisar sem quebrar a pagina.
-app.get('/api/campanhas/imagens', async (_req, res) => {
-  if (!GOOGLE_DRIVE_API_KEY || !DRIVE_CAMPAIGN_FOLDER_ID) {
+// do corretor logado (drive_pasta_teasers, resolvida por requireAuth). Exige
+// GOOGLE_DRIVE_API_KEY configurada; sem isso, devolve configurado:false pro
+// frontend avisar sem quebrar a pagina.
+app.get('/api/campanhas/imagens', requireAuth, async (req, res) => {
+  if (!GOOGLE_DRIVE_API_KEY || !req.driveFolder) {
     return res.json({ configurado: false, imagens: [] });
   }
   try {
-    const q = encodeURIComponent(`'${DRIVE_CAMPAIGN_FOLDER_ID}' in parents and trashed = false and mimeType contains 'image/'`);
+    const q = encodeURIComponent(`'${req.driveFolder}' in parents and trashed = false and mimeType contains 'image/'`);
     const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=100&key=${GOOGLE_DRIVE_API_KEY}`;
     const driveRes = await fetch(url);
     const driveData = await driveRes.json();
@@ -522,12 +554,12 @@ app.get('/api/campanhas/imagens', async (_req, res) => {
 });
 
 // GET /api/campanhas/destinatarios/contagem?modo=todos|etapa|manual&etapa=&ids=1,2,3
-app.get('/api/campanhas/destinatarios/contagem', async (req, res) => {
+app.get('/api/campanhas/destinatarios/contagem', requireAuth, async (req, res) => {
   try {
     const modo = req.query.modo;
     const etapa = req.query.etapa;
     const leadIds = req.query.ids ? String(req.query.ids).split(',').map(Number).filter(Boolean) : [];
-    const count = await contarDestinatarios({ modo, etapa, leadIds });
+    const count = await contarDestinatarios({ modo, etapa, leadIds, instance: req.instance });
     res.json({ count });
   } catch (err) {
     console.error(err);
@@ -536,12 +568,12 @@ app.get('/api/campanhas/destinatarios/contagem', async (req, res) => {
 });
 
 // GET /api/campanhas — historico, mais recentes primeiro
-app.get('/api/campanhas', async (_req, res) => {
+app.get('/api/campanhas', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('campanhas')
       .select('*')
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .order('created_at', { ascending: false });
     if (error) throw error;
     res.json({ data });
@@ -552,7 +584,7 @@ app.get('/api/campanhas', async (_req, res) => {
 });
 
 // POST /api/campanhas — cria a campanha a partir do wizard
-app.post('/api/campanhas', async (req, res) => {
+app.post('/api/campanhas', requireAuth, async (req, res) => {
   try {
     const mensagens = (req.body.mensagens || []).map((m) => String(m).trim()).filter(Boolean);
     if (mensagens.length < MIN_MENSAGENS) {
@@ -589,7 +621,7 @@ app.post('/api/campanhas', async (req, res) => {
       }
     }
 
-    const count = await contarDestinatarios({ modo, etapa, leadIds });
+    const count = await contarDestinatarios({ modo, etapa, leadIds, instance: req.instance });
     if (count === 0) {
       return res.status(400).json({ error: 'Nenhum destinatário encontrado com essa seleção.' });
     }
@@ -600,7 +632,7 @@ app.post('/api/campanhas', async (req, res) => {
     const { data, error } = await supabase
       .from('campanhas')
       .insert({
-        instance: PANEL_INSTANCE,
+        instance: req.instance,
         nome,
         mensagens,
         imagens,
@@ -623,7 +655,7 @@ app.post('/api/campanhas', async (req, res) => {
     try {
       const { folder_id, files } = await copiarImagensCampanha({
         campanhaId: data.id,
-        instance: PANEL_INSTANCE,
+        instance: req.instance,
         fileIds: imagens.map((i) => i.id),
       });
       const imagensAtualizadas = files.map((f) => ({
@@ -693,14 +725,14 @@ app.patch('/api/campanhas/:id/status', async (req, res) => {
 });
 
 // DELETE /api/campanhas/:id — cancela uma campanha ainda nao enviada
-app.delete('/api/campanhas/:id', async (req, res) => {
+app.delete('/api/campanhas/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { data: campanha, error: fetchError } = await supabase
       .from('campanhas')
       .select('status')
       .eq('id', id)
-      .eq('instance', PANEL_INSTANCE)
+      .eq('instance', req.instance)
       .single();
     if (fetchError || !campanha) {
       return res.status(404).json({ error: 'Campanha não encontrada.' });
@@ -718,7 +750,7 @@ app.delete('/api/campanhas/:id', async (req, res) => {
         await fetchComTimeout(N8N_CANCELAR_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
-          body: JSON.stringify({ instance: PANEL_INSTANCE }),
+          body: JSON.stringify({ instance: req.instance }),
         }, 10000);
       } catch (cancelErr) {
         console.error(`Falha ao avisar o n8n para cancelar a campanha ${id}:`, cancelErr);
@@ -738,7 +770,7 @@ app.delete('/api/campanhas/:id', async (req, res) => {
   }
 });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, instance: PANEL_INSTANCE }));
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // Em producao, serve o build estatico do React
 if (process.env.NODE_ENV === 'production') {
@@ -760,7 +792,6 @@ async function processarCampanhasAgendadas() {
     const { data: pendentes, error } = await supabase
       .from('campanhas')
       .select()
-      .eq('instance', PANEL_INSTANCE)
       .eq('status', 'agendada')
       .lte('agendamento_data', new Date().toISOString());
     if (error) throw error;
@@ -782,5 +813,5 @@ async function processarCampanhasAgendadas() {
 setInterval(processarCampanhasAgendadas, SCHEDULER_INTERVAL_MS);
 
 app.listen(PORT, () => {
-  console.log(`Painel de Leads rodando na porta ${PORT} (instance=${PANEL_INSTANCE})`);
+  console.log(`Painel de Leads rodando na porta ${PORT}`);
 });

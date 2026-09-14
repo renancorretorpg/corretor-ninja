@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from './supabaseClient';
 import type {
   Campanha,
   DestinatariosModo,
@@ -11,10 +12,24 @@ import type {
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  });
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (session?.access_token) {
+    headers.Authorization = `Bearer ${session.access_token}`;
+  }
+
+  const res = await fetch(url, { ...init, headers });
+
+  if (res.status === 401) {
+    await supabase.auth.signOut();
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Erro ${res.status}`);

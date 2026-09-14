@@ -2,13 +2,26 @@ import { NavLink, Route, Routes } from 'react-router-dom';
 import { LeadsPage } from './components/LeadsPage';
 import { EtapasPage } from './components/EtapasPage';
 import { CampanhasPage } from './components/CampanhasPage';
+import { LoginPage } from './components/LoginPage';
+import { useAuth } from './AuthContext';
+import { Button } from './components/ui';
 
 const linkBase = 'rounded-md px-3 py-1.5 text-sm font-medium transition-colors';
 
 export default function App() {
+  const { session, loading, signOut } = useAuth();
+
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando...</div>;
+  }
+
+  if (!session) {
+    return <LoginPage />;
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
-      <header className="mb-6 flex items-center justify-between">
+      <header className="mb-6 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Corretor Ninja</h1>
           <p className="text-sm text-muted-foreground">Painel</p>
@@ -40,6 +53,12 @@ export default function App() {
             Campanhas
           </NavLink>
         </nav>
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs text-muted-foreground sm:inline">{session.user.email}</span>
+          <Button variant="ghost" onClick={() => signOut()}>
+            Sair
+          </Button>
+        </div>
       </header>
 
       <Routes>
