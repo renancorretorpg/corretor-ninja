@@ -10,6 +10,7 @@ const {
   N8N_DISPARO_WEBHOOK_URL,
   N8N_COPIAR_IMAGENS_WEBHOOK_URL,
   N8N_CANCELAR_WEBHOOK_URL,
+  N8N_ADICIONAR_IMAGEM_WEBHOOK_URL,
   N8N_WEBHOOK_SECRET,
   PORT = 8090,
 } = process.env;
@@ -25,7 +26,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Limite maior que o default (100kb) por causa do upload de imagens em base64
+// na criacao/edicao de campanhas.
+app.use(express.json({ limit: '15mb' }));
 
 // Valida a sessao Supabase (Authorization: Bearer <token>) e resolve qual
 // corretor ela e via corretor_perfis. Mesmo padrao do painel antigo hospedado
@@ -553,6 +556,38 @@ app.get('/api/campanhas/imagens', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/campanhas/imagens/upload — sobe foto(s) novas direto pra pasta do
+// Drive do corretor logado (adiciona, nunca substitui as que ja estao la).
+app.post('/api/campanhas/imagens/upload', requireAuth, async (req, res) => {
+  try {
+    const imagens = Array.isArray(req.body.imagens) ? req.body.imagens : [];
+    if (!imagens.length) {
+      return res.status(400).json({ error: 'Nenhuma imagem enviada.' });
+    }
+    if (!req.driveFolder) {
+      return res.status(400).json({ error: 'Pasta de imagens não configurada pra sua conta.' });
+    }
+
+    const resp = await fetchComTimeout(N8N_ADICIONAR_IMAGEM_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+      body: JSON.stringify({ instance: req.instance, folder_id: req.driveFolder, imagens }),
+    }, 20000);
+    if (!resp.ok) throw new Error(`Falha ao enviar imagens (n8n respondeu ${resp.status}).`);
+    const { files } = await resp.json();
+
+    const mapeadas = (files || []).map((f) => ({
+      id: f.id,
+      nome: f.nome,
+      url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`,
+    }));
+    res.json({ files: mapeadas });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/campanhas/destinatarios/contagem?modo=todos|etapa|manual&etapa=&ids=1,2,3
 app.get('/api/campanhas/destinatarios/contagem', requireAuth, async (req, res) => {
   try {
@@ -592,8 +627,8 @@ app.post('/api/campanhas', requireAuth, async (req, res) => {
     }
 
     const imagens = Array.isArray(req.body.imagens) ? req.body.imagens : [];
-    if (imagens.length < 1 || imagens.length > MAX_IMAGENS) {
-      return res.status(400).json({ error: `Selecione de 1 a ${MAX_IMAGENS} imagens.` });
+    if (imagens.length > MAX_IMAGENS) {
+      return res.status(400).json({ error: `Selecione no máximo ${MAX_IMAGENS} imagens.` });
     }
 
     const modo = req.body.destinatarios_modo;

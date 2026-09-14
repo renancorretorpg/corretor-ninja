@@ -176,6 +176,20 @@ export function useCampanhaImagens() {
   });
 }
 
+// Sobe foto(s) novas pra pasta do Drive do corretor (adiciona, nao substitui
+// as que ja estao la). imagens: base64 sem o prefixo "data:...;base64,".
+export function useUploadCampanhaImagens() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (imagens: { base64: string; fileName: string; mimetype: string }[]) =>
+      fetchJson<{ files: ImagemDrive[] }>('/api/campanhas/imagens/upload', {
+        method: 'POST',
+        body: JSON.stringify({ imagens }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campanha-imagens'] }),
+  });
+}
+
 export function useDestinatariosContagem(
   modo: DestinatariosModo,
   etapa: string | undefined,

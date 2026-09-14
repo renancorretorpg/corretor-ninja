@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ChangeEvent } from 'react';
 import {
   useBuscarLeads,
   useCampanhaImagens,
@@ -7,6 +7,7 @@ import {
   useCreateCampanha,
   useDestinatariosContagem,
   useEtapas,
+  useUploadCampanhaImagens,
 } from '../api';
 import type { AgendamentoTipo, Campanha, DestinatariosModo, ImagemDrive, Lead } from '../types';
 import { Badge, Button, Card, Input, Select } from './ui';
@@ -99,6 +100,19 @@ function WizardMensagens({
   );
 }
 
+function fileParaBase64(file: File): Promise<{ base64: string; fileName: string; mimetype: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const resultado = reader.result as string;
+      const base64 = resultado.split(',')[1] || '';
+      resolve({ base64, fileName: file.name, mimetype: file.type || 'image/jpeg' });
+    };
+    reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function WizardImagens({
   selecionadas,
   onChange,
@@ -107,6 +121,8 @@ function WizardImagens({
   onChange: (v: ImagemDrive[]) => void;
 }) {
   const { data, isLoading } = useCampanhaImagens();
+  const uploadImagens = useUploadCampanhaImagens();
+  const [erroUpload, setErroUpload] = useState('');
 
   function toggle(img: ImagemDrive) {
     const jaSelecionada = selecionadas.some((s) => s.id === img.id);
@@ -117,46 +133,76 @@ function WizardImagens({
     }
   }
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Carregando galeria...</p>;
-
-  if (!data?.configurado) {
-    return (
-      <p className="text-sm text-amber-700">
-        A galeria de imagens do Drive ainda não está configurada neste painel (falta a chave da API do
-        Google). Avise pra gente configurar antes de disparar campanhas com imagem.
-      </p>
-    );
-  }
-
-  if (data.imagens.length === 0) {
-    return <p className="text-sm text-muted-foreground">Nenhuma imagem encontrada na sua pasta do Drive.</p>;
+  async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
+    const arquivos = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (arquivos.length === 0) return;
+    setErroUpload('');
+    try {
+      const imagens = await Promise.all(arquivos.map(fileParaBase64));
+      const { files } = await uploadImagens.mutateAsync(imagens);
+      onChange([...selecionadas, ...files].slice(0, MAX_IMAGENS));
+    } catch (err) {
+      setErroUpload((err as Error).message);
+    }
   }
 
   return (
     <div>
       <p className="mb-3 text-sm text-muted-foreground">
-        Selecione de 1 a {MAX_IMAGENS} imagens ({selecionadas.length}/{MAX_IMAGENS} selecionadas).
+        Selecione até {MAX_IMAGENS} imagens (opcional) — {selecionadas.length}/{MAX_IMAGENS} selecionadas.
       </p>
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
-        {data.imagens.map((img) => {
-          const ativa = selecionadas.some((s) => s.id === img.id);
-          const bloqueada = !ativa && selecionadas.length >= MAX_IMAGENS;
-          return (
-            <button
-              key={img.id}
-              type="button"
-              onClick={() => toggle(img)}
-              disabled={bloqueada}
-              className={`overflow-hidden rounded-lg border-2 text-left transition-colors disabled:opacity-40 ${
-                ativa ? 'border-primary' : 'border-border'
-              }`}
-            >
-              <img src={img.url} alt={img.nome} className="h-24 w-full object-cover" />
-              <p className="truncate px-1.5 py-1 text-xs">{img.nome}</p>
-            </button>
-          );
-        })}
-      </div>
+
+      {isLoading ? (
+        <p className="mb-3 text-sm text-muted-foreground">Carregando galeria...</p>
+      ) : !data?.configurado ? (
+        <p className="mb-3 text-sm text-amber-700">
+          A galeria de imagens do Drive ainda não está configurada neste painel (falta a chave da API do
+          Google) — não dá pra listar as fotos existentes, mas você pode enviar fotos novas abaixo.
+        </p>
+      ) : data.imagens.length === 0 ? (
+        <p className="mb-3 text-sm text-muted-foreground">Nenhuma imagem na sua pasta do Drive ainda — envie uma abaixo.</p>
+      ) : (
+        <div className="mb-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
+          {data.imagens.map((img) => {
+            const ativa = selecionadas.some((s) => s.id === img.id);
+            const bloqueada = !ativa && selecionadas.length >= MAX_IMAGENS;
+            return (
+              <button
+                key={img.id}
+                type="button"
+                onClick={() => toggle(img)}
+                disabled={bloqueada}
+                className={`overflow-hidden rounded-lg border-2 text-left transition-colors disabled:opacity-40 ${
+                  ativa ? 'border-primary' : 'border-border'
+                }`}
+              >
+                <img src={img.url} alt={img.nome} className="h-24 w-full object-cover" />
+                <p className="truncate px-1.5 py-1 text-xs">{img.nome}</p>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleUpload}
+        disabled={uploadImagens.isPending}
+        className="hidden"
+        id="upload-imagens-campanha"
+      />
+      <Button
+        variant="outline"
+        type="button"
+        disabled={uploadImagens.isPending}
+        onClick={() => document.getElementById('upload-imagens-campanha')?.click()}
+      >
+        {uploadImagens.isPending ? 'Enviando...' : '+ Adicionar fotos'}
+      </Button>
+      {erroUpload && <p className="mt-2 text-sm text-red-600">{erroUpload}</p>}
     </div>
   );
 }
@@ -321,9 +367,6 @@ export function CampanhasPage() {
       const validas = draft.mensagens.map((m) => m.trim()).filter(Boolean);
       if (validas.length < MIN_MENSAGENS) return `Cadastre pelo menos ${MIN_MENSAGENS} variantes de mensagem.`;
     }
-    if (e === 2) {
-      if (draft.imagens.length === 0) return 'Selecione ao menos 1 imagem.';
-    }
     if (e === 3) {
       if (draft.destinatariosModo === 'etapa' && !draft.destinatariosEtapa) return 'Selecione a etapa de destino.';
       if (draft.destinatariosModo === 'manual' && draft.leadsSelecionados.size === 0)
@@ -440,9 +483,13 @@ export function CampanhasPage() {
                 <strong>{draft.mensagens.map((m) => m.trim()).filter(Boolean).length}</strong> variantes de mensagem
               </p>
               <div className="flex gap-2">
-                {draft.imagens.map((img) => (
-                  <img key={img.id} src={img.url} alt={img.nome} className="h-16 w-16 rounded object-cover" />
-                ))}
+                {draft.imagens.length === 0 ? (
+                  <span className="text-muted-foreground">Sem imagens (só texto)</span>
+                ) : (
+                  draft.imagens.map((img) => (
+                    <img key={img.id} src={img.url} alt={img.nome} className="h-16 w-16 rounded object-cover" />
+                  ))
+                )}
               </div>
               <p>
                 Destinatários:{' '}
