@@ -7,6 +7,8 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   PANEL_INSTANCE = 'Renan',
+  DRIVE_CAMPAIGN_FOLDER_ID,
+  GOOGLE_DRIVE_API_KEY,
   PORT = 8090,
 } = process.env;
 
@@ -360,6 +362,200 @@ app.delete('/api/etapas/:id', async (req, res) => {
 
     const { error: deleteError } = await supabase.from('etapas').delete().eq('id', id);
     if (deleteError) throw deleteError;
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const MIN_MENSAGENS = 3;
+const MAX_IMAGENS = 4;
+
+async function contarDestinatarios({ modo, etapa, leadIds }) {
+  if (modo === 'todos') {
+    const { count, error } = await supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', PANEL_INSTANCE);
+    if (error) throw error;
+    return count ?? 0;
+  }
+  if (modo === 'etapa') {
+    if (!etapa) return 0;
+    const { count, error } = await supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', PANEL_INSTANCE)
+      .eq('status', etapa);
+    if (error) throw error;
+    return count ?? 0;
+  }
+  if (modo === 'manual') {
+    const ids = Array.isArray(leadIds) ? leadIds : [];
+    if (ids.length === 0) return 0;
+    const { count, error } = await supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', PANEL_INSTANCE)
+      .in('id', ids);
+    if (error) throw error;
+    return count ?? 0;
+  }
+  return 0;
+}
+
+// GET /api/campanhas/imagens — lista as imagens disponiveis na pasta do Drive
+// do corretor. Exige GOOGLE_DRIVE_API_KEY + DRIVE_CAMPAIGN_FOLDER_ID configurados;
+// sem isso, devolve configurado:false pro frontend avisar sem quebrar a pagina.
+app.get('/api/campanhas/imagens', async (_req, res) => {
+  if (!GOOGLE_DRIVE_API_KEY || !DRIVE_CAMPAIGN_FOLDER_ID) {
+    return res.json({ configurado: false, imagens: [] });
+  }
+  try {
+    const q = encodeURIComponent(`'${DRIVE_CAMPAIGN_FOLDER_ID}' in parents and trashed = false and mimeType contains 'image/'`);
+    const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=100&key=${GOOGLE_DRIVE_API_KEY}`;
+    const driveRes = await fetch(url);
+    const driveData = await driveRes.json();
+    if (!driveRes.ok) throw new Error(driveData.error?.message || 'Erro ao consultar o Drive.');
+
+    const imagens = (driveData.files || []).map((f) => ({
+      id: f.id,
+      nome: f.name,
+      url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`,
+    }));
+    res.json({ configurado: true, imagens });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/campanhas/destinatarios/contagem?modo=todos|etapa|manual&etapa=&ids=1,2,3
+app.get('/api/campanhas/destinatarios/contagem', async (req, res) => {
+  try {
+    const modo = req.query.modo;
+    const etapa = req.query.etapa;
+    const leadIds = req.query.ids ? String(req.query.ids).split(',').map(Number).filter(Boolean) : [];
+    const count = await contarDestinatarios({ modo, etapa, leadIds });
+    res.json({ count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/campanhas — historico, mais recentes primeiro
+app.get('/api/campanhas', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('campanhas')
+      .select('*')
+      .eq('instance', PANEL_INSTANCE)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/campanhas — cria a campanha a partir do wizard
+app.post('/api/campanhas', async (req, res) => {
+  try {
+    const mensagens = (req.body.mensagens || []).map((m) => String(m).trim()).filter(Boolean);
+    if (mensagens.length < MIN_MENSAGENS) {
+      return res.status(400).json({ error: `Cadastre pelo menos ${MIN_MENSAGENS} variantes de mensagem.` });
+    }
+
+    const imagens = Array.isArray(req.body.imagens) ? req.body.imagens : [];
+    if (imagens.length < 1 || imagens.length > MAX_IMAGENS) {
+      return res.status(400).json({ error: `Selecione de 1 a ${MAX_IMAGENS} imagens.` });
+    }
+
+    const modo = req.body.destinatarios_modo;
+    if (!['todos', 'etapa', 'manual'].includes(modo)) {
+      return res.status(400).json({ error: 'Forma de seleção de destinatários inválida.' });
+    }
+    const etapa = req.body.destinatarios_etapa || null;
+    const leadIds = Array.isArray(req.body.destinatarios_lead_ids) ? req.body.destinatarios_lead_ids : null;
+    if (modo === 'etapa' && !etapa) {
+      return res.status(400).json({ error: 'Selecione a etapa de destino.' });
+    }
+    if (modo === 'manual' && (!leadIds || leadIds.length === 0)) {
+      return res.status(400).json({ error: 'Selecione ao menos um lead.' });
+    }
+
+    const agendamentoTipo = req.body.agendamento_tipo;
+    if (!['imediato', 'agendado'].includes(agendamentoTipo)) {
+      return res.status(400).json({ error: 'Tipo de agendamento inválido.' });
+    }
+    let agendamentoData = null;
+    if (agendamentoTipo === 'agendado') {
+      agendamentoData = req.body.agendamento_data;
+      if (!agendamentoData || new Date(agendamentoData) <= new Date()) {
+        return res.status(400).json({ error: 'Escolha uma data/hora futura para o agendamento.' });
+      }
+    }
+
+    const count = await contarDestinatarios({ modo, etapa, leadIds });
+    if (count === 0) {
+      return res.status(400).json({ error: 'Nenhum destinatário encontrado com essa seleção.' });
+    }
+
+    const nome = (req.body.nome || '').trim() || `Campanha ${new Date().toLocaleDateString('pt-BR')}`;
+    const status = agendamentoTipo === 'imediato' ? 'pendente_envio' : 'agendada';
+
+    const { data, error } = await supabase
+      .from('campanhas')
+      .insert({
+        instance: PANEL_INSTANCE,
+        nome,
+        mensagens,
+        imagens,
+        destinatarios_modo: modo,
+        destinatarios_etapa: etapa,
+        destinatarios_lead_ids: leadIds,
+        destinatarios_count: count,
+        agendamento_tipo: agendamentoTipo,
+        agendamento_data: agendamentoData,
+        status,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/campanhas/:id — cancela uma campanha ainda nao enviada
+app.delete('/api/campanhas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: campanha, error: fetchError } = await supabase
+      .from('campanhas')
+      .select('status')
+      .eq('id', id)
+      .eq('instance', PANEL_INSTANCE)
+      .single();
+    if (fetchError || !campanha) {
+      return res.status(404).json({ error: 'Campanha não encontrada.' });
+    }
+    if (campanha.status === 'enviada') {
+      return res.status(400).json({ error: 'Campanha já enviada não pode ser cancelada.' });
+    }
+
+    const { error } = await supabase
+      .from('campanhas')
+      .update({ status: 'cancelada', updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
 
     res.json({ ok: true });
   } catch (err) {

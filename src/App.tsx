@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { LeadsPage } from './components/LeadsPage';
 import { EtapasPage } from './components/EtapasPage';
+import { CampanhasPage } from './components/CampanhasPage';
 
 const linkBase = 'rounded-md px-3 py-1.5 text-sm font-medium transition-colors';
 
@@ -30,12 +31,21 @@ export default function App() {
           >
             Etapas
           </NavLink>
+          <NavLink
+            to="/campanhas"
+            className={({ isActive }) =>
+              `${linkBase} ${isActive ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`
+            }
+          >
+            Campanhas
+          </NavLink>
         </nav>
       </header>
 
       <Routes>
         <Route path="/" element={<LeadsPage />} />
         <Route path="/etapas" element={<EtapasPage />} />
+        <Route path="/campanhas" element={<CampanhasPage />} />
       </Routes>
     </div>
   );

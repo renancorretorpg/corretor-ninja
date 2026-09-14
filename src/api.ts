@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Etapa, Lead, LeadsFilters, LeadsResponse } from './types';
+import type {
+  Campanha,
+  DestinatariosModo,
+  Etapa,
+  ImagemDrive,
+  Lead,
+  LeadsFilters,
+  LeadsResponse,
+  NovaCampanhaPayload,
+} from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -133,5 +142,65 @@ export function useDeleteEtapa() {
         body: JSON.stringify({ moveTo }),
       }),
     onSuccess: () => invalidateEtapas(queryClient),
+  });
+}
+
+export function useBuscarLeads(search: string) {
+  return useQuery({
+    queryKey: ['leads-busca', search],
+    queryFn: () =>
+      fetchJson<LeadsResponse>(`/api/leads?${buildQuery({ page: 1, pageSize: 20, search })}`),
+    enabled: search.trim().length >= 2,
+  });
+}
+
+export function useCampanhaImagens() {
+  return useQuery({
+    queryKey: ['campanha-imagens'],
+    queryFn: () => fetchJson<{ configurado: boolean; imagens: ImagemDrive[] }>('/api/campanhas/imagens'),
+  });
+}
+
+export function useDestinatariosContagem(
+  modo: DestinatariosModo,
+  etapa: string | undefined,
+  leadIds: number[],
+) {
+  const params = new URLSearchParams({ modo });
+  if (modo === 'etapa' && etapa) params.set('etapa', etapa);
+  if (modo === 'manual') params.set('ids', leadIds.join(','));
+  const habilitado = modo === 'todos' || (modo === 'etapa' && !!etapa) || (modo === 'manual' && leadIds.length > 0);
+
+  return useQuery({
+    queryKey: ['destinatarios-contagem', modo, etapa, leadIds],
+    queryFn: () => fetchJson<{ count: number }>(`/api/campanhas/destinatarios/contagem?${params.toString()}`),
+    enabled: habilitado,
+  });
+}
+
+export function useCampanhas() {
+  return useQuery({
+    queryKey: ['campanhas'],
+    queryFn: () => fetchJson<{ data: Campanha[] }>('/api/campanhas'),
+  });
+}
+
+export function useCreateCampanha() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NovaCampanhaPayload) =>
+      fetchJson<{ data: Campanha }>('/api/campanhas', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campanhas'] }),
+  });
+}
+
+export function useCancelarCampanha() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => fetchJson<{ ok: true }>(`/api/campanhas/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campanhas'] }),
   });
 }

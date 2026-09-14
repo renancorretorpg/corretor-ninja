@@ -37,6 +37,44 @@ export interface Etapa {
   updated_at: string;
 }
 
+export interface ImagemDrive {
+  id: string;
+  nome: string;
+  url: string;
+}
+
+export type DestinatariosModo = 'todos' | 'etapa' | 'manual';
+export type AgendamentoTipo = 'imediato' | 'agendado';
+export type CampanhaStatus = 'pendente_envio' | 'agendada' | 'enviada' | 'cancelada';
+
+export interface Campanha {
+  id: number;
+  instance: string;
+  nome: string;
+  mensagens: string[];
+  imagens: ImagemDrive[];
+  destinatarios_modo: DestinatariosModo;
+  destinatarios_etapa: string | null;
+  destinatarios_lead_ids: number[] | null;
+  destinatarios_count: number;
+  agendamento_tipo: AgendamentoTipo;
+  agendamento_data: string | null;
+  status: CampanhaStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NovaCampanhaPayload {
+  nome?: string;
+  mensagens: string[];
+  imagens: ImagemDrive[];
+  destinatarios_modo: DestinatariosModo;
+  destinatarios_etapa?: string;
+  destinatarios_lead_ids?: number[];
+  agendamento_tipo: AgendamentoTipo;
+  agendamento_data?: string;
+}
+
 export interface LeadsFilters {
   page: number;
   pageSize: number;
