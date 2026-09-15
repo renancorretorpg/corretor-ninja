@@ -14,6 +14,7 @@ const {
   N8N_CANCELAR_WEBHOOK_URL,
   N8N_ADICIONAR_IMAGEM_WEBHOOK_URL,
   N8N_CRIAR_CLIENTE_WEBHOOK_URL,
+  N8N_VERIFICAR_CLIENTE_WEBHOOK_URL,
   N8N_WEBHOOK_SECRET,
   PANEL_PUBLIC_URL,
   EVOLUTION_API_URL,
@@ -1120,6 +1121,32 @@ app.post('/api/admin/corretores/:instance/qrcode', requireAuth, requireAdmin, as
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
   }
+});
+
+// Checa se ja existe um cliente com esse instance na tabela `clientes` do
+// n8n (Evolution/CRM/leads) -- usado pra avisar o admin antes de aprovar um
+// cadastro/convite com um identificador que já pertence a outro corretor
+// (ex: reaproveitar o link de convite pra alguem que ja tem tudo criado
+// manualmente, sem perceber que o identificador bate com o de outra pessoa).
+async function clienteJaExiste(instance) {
+  if (!N8N_VERIFICAR_CLIENTE_WEBHOOK_URL) return { existe: null, erro: 'N8N_VERIFICAR_CLIENTE_WEBHOOK_URL não configurado no painel.' };
+  try {
+    const resp = await fetchComTimeout(N8N_VERIFICAR_CLIENTE_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+      body: JSON.stringify({ instance }),
+    }, 10000);
+    const corpo = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { existe: null, erro: corpo.error || `n8n respondeu ${resp.status}` };
+    return { existe: Boolean(corpo.existe), erro: null };
+  } catch (err) {
+    return { existe: null, erro: err.message };
+  }
+}
+
+app.get('/api/admin/corretores/verificar/:instance', requireAuth, requireAdmin, async (req, res) => {
+  const resultado = await clienteJaExiste(req.params.instance);
+  res.json(resultado);
 });
 
 function validarDadosCorretor(d) {

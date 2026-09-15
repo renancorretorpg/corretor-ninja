@@ -9,6 +9,7 @@ import {
   useFinalizarConvite,
   useGerarQrCodeCorretor,
   useUpdateCorretor,
+  useVerificarClienteExistente,
 } from '../api';
 import type { Corretor, Convite, NovoCorretorResultado } from '../types';
 import { Badge, Button, Card, Input, Modal } from './ui';
@@ -79,10 +80,12 @@ function ResultadoCriacaoInfo({ resultado }: { resultado: ResultadoCriacao }) {
 function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (r: ResultadoCriacao) => void }) {
   const finalizar = useFinalizarConvite();
   const deletar = useDeleteConvite();
+  const verificarCliente = useVerificarClienteExistente();
   const [instance, setInstance] = useState(slugify(convite.nome_corretor || ''));
   const [erro, setErro] = useState('');
   const [copiado, setCopiado] = useState(false);
   const [finalizado, setFinalizado] = useState(false);
+  const [avisoExistente, setAvisoExistente] = useState(false);
 
   function copiarLink() {
     navigator.clipboard?.writeText(convite.url).then(() => {
@@ -91,16 +94,7 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
     });
   }
 
-  function finalizarConvite() {
-    if (!instance.trim()) {
-      setErro('Informe o identificador único.');
-      return;
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(instance.trim())) {
-      setErro('O identificador só pode ter letras, números, "-" e "_".');
-      return;
-    }
-    setErro('');
+  function finalizarConfirmado() {
     finalizar.mutate(
       { id: convite.id, instance: instance.trim() },
       {
@@ -117,6 +111,24 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
         onError: (err) => setErro((err as Error).message),
       },
     );
+  }
+
+  async function finalizarConvite() {
+    if (!instance.trim()) {
+      setErro('Informe o identificador único.');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(instance.trim())) {
+      setErro('O identificador só pode ter letras, números, "-" e "_".');
+      return;
+    }
+    setErro('');
+    const verificacao = await verificarCliente.mutateAsync(instance.trim()).catch(() => null);
+    if (verificacao?.existe) {
+      setAvisoExistente(true);
+      return;
+    }
+    finalizarConfirmado();
   }
 
   return (
@@ -153,11 +165,36 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1">
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Identificador único (instance)</label>
-            <Input value={instance} onChange={(e) => setInstance(e.target.value)} placeholder="renan" />
+            <Input
+              value={instance}
+              onChange={(e) => {
+                setInstance(e.target.value);
+                setAvisoExistente(false);
+              }}
+              placeholder="renan"
+            />
           </div>
-          <Button onClick={finalizarConvite} disabled={finalizar.isPending}>
-            {finalizar.isPending ? 'Aprovando...' : 'Aprovar e criar acesso'}
+          <Button onClick={finalizarConvite} disabled={finalizar.isPending || verificarCliente.isPending}>
+            {verificarCliente.isPending ? 'Verificando...' : finalizar.isPending ? 'Aprovando...' : 'Aprovar e criar acesso'}
           </Button>
+        </div>
+      )}
+      {avisoExistente && (
+        <div className="mt-2 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm text-amber-800">
+            ⚠️ Já existe um cliente com o identificador <strong>{instance.trim()}</strong> cadastrado (WhatsApp/CRM já
+            configurados). Se for a mesma pessoa, prosseguir só cria o login do painel — a instância do WhatsApp e os
+            dados do CRM dela <strong>não são alterados</strong>. Se não for a mesma pessoa, cancele e use outro
+            identificador.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setAvisoExistente(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={finalizarConfirmado} disabled={finalizar.isPending}>
+              {finalizar.isPending ? 'Aprovando...' : 'É a mesma pessoa, continuar'}
+            </Button>
+          </div>
         </div>
       )}
       {erro && <p className="mt-2 text-sm text-red-600">{erro}</p>}
@@ -201,8 +238,10 @@ function ConvitesSection({ onResultado }: { onResultado: (r: ResultadoCriacao) =
 
 function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCriacao) => void }) {
   const createCorretor = useCreateCorretor();
+  const verificarCliente = useVerificarClienteExistente();
   const [form, setForm] = useState(estadoInicial());
   const [erro, setErro] = useState('');
+  const [avisoExistente, setAvisoExistente] = useState(false);
 
   function atualizarNome(nome: string) {
     setForm((f) => ({
@@ -210,10 +249,12 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
       nomeCorretor: nome,
       instance: f.instanceEditadaManualmente ? f.instance : slugify(nome),
     }));
+    setAvisoExistente(false);
   }
 
   function atualizarInstance(instance: string) {
     setForm((f) => ({ ...f, instance, instanceEditadaManualmente: true }));
+    setAvisoExistente(false);
   }
 
   function validar(): string | null {
@@ -229,13 +270,7 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
     return null;
   }
 
-  function enviar() {
-    const erroValidacao = validar();
-    if (erroValidacao) {
-      setErro(erroValidacao);
-      return;
-    }
-    setErro('');
+  function enviarConfirmado() {
     createCorretor.mutate(
       {
         instance: form.instance.trim(),
@@ -257,10 +292,26 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
             qrcode_base64: res.qrcode_base64,
           });
           setForm(estadoInicial());
+          setAvisoExistente(false);
         },
         onError: (err) => setErro((err as Error).message),
       },
     );
+  }
+
+  async function enviar() {
+    const erroValidacao = validar();
+    if (erroValidacao) {
+      setErro(erroValidacao);
+      return;
+    }
+    setErro('');
+    const verificacao = await verificarCliente.mutateAsync(form.instance.trim()).catch(() => null);
+    if (verificacao?.existe) {
+      setAvisoExistente(true);
+      return;
+    }
+    enviarConfirmado();
   }
 
   return (
@@ -355,11 +406,30 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
             />
           </div>
 
+          {avisoExistente && (
+            <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm text-amber-800">
+                ⚠️ Já existe um cliente com o identificador <strong>{form.instance.trim()}</strong> cadastrado
+                (WhatsApp/CRM já configurados). Se for a mesma pessoa, prosseguir só cria o login do painel — a
+                instância do WhatsApp e os dados do CRM dela <strong>não são alterados</strong>. Se não for a mesma
+                pessoa, escolha outro identificador.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setAvisoExistente(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={enviarConfirmado} disabled={createCorretor.isPending}>
+                  {createCorretor.isPending ? 'Cadastrando...' : 'É a mesma pessoa, continuar'}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {erro && <p className="text-sm text-red-600">{erro}</p>}
 
           <div className="flex justify-end">
-            <Button onClick={enviar} disabled={createCorretor.isPending}>
-              {createCorretor.isPending ? 'Cadastrando...' : 'Cadastrar corretor'}
+            <Button onClick={enviar} disabled={createCorretor.isPending || verificarCliente.isPending}>
+              {verificarCliente.isPending ? 'Verificando...' : createCorretor.isPending ? 'Cadastrando...' : 'Cadastrar corretor'}
             </Button>
           </div>
         </div>

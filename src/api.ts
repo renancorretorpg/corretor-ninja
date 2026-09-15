@@ -17,6 +17,7 @@ import type {
   NovoCorretorResultado,
   PreencherConvitePayload,
   QrCodeResultado,
+  VerificarClienteResultado,
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -288,6 +289,15 @@ export function useDeleteCorretor() {
     mutationFn: (instance: string) =>
       fetchJson<{ ok: true }>(`/api/admin/corretores/${encodeURIComponent(instance)}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
+// Checagem sob demanda (nao e' useQuery pq so queremos disparar na hora de
+// aprovar/cadastrar, nao a cada tecla digitada no identificador).
+export function useVerificarClienteExistente() {
+  return useMutation({
+    mutationFn: (instance: string) =>
+      fetchJson<VerificarClienteResultado>(`/api/admin/corretores/verificar/${encodeURIComponent(instance)}`),
   });
 }
 
