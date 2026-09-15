@@ -6,9 +6,11 @@ import {
   useCreateCorretor,
   useDeleteConvite,
   useFinalizarConvite,
+  useGerarQrCodeCorretor,
+  useUpdateCorretor,
 } from '../api';
-import type { Convite, NovoCorretorResultado } from '../types';
-import { Badge, Button, Card, Input } from './ui';
+import type { Corretor, Convite, NovoCorretorResultado } from '../types';
+import { Badge, Button, Card, Input, Modal } from './ui';
 
 function slugify(nome: string): string {
   return (
@@ -73,13 +75,13 @@ function ResultadoCriacaoInfo({ resultado }: { resultado: ResultadoCriacao }) {
   );
 }
 
-function ConviteRow({ convite }: { convite: Convite }) {
+function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (r: ResultadoCriacao) => void }) {
   const finalizar = useFinalizarConvite();
   const deletar = useDeleteConvite();
   const [instance, setInstance] = useState(slugify(convite.nome_corretor || ''));
   const [erro, setErro] = useState('');
-  const [resultado, setResultado] = useState<ResultadoCriacao | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [finalizado, setFinalizado] = useState(false);
 
   function copiarLink() {
     navigator.clipboard?.writeText(convite.url).then(() => {
@@ -101,14 +103,16 @@ function ConviteRow({ convite }: { convite: Convite }) {
     finalizar.mutate(
       { id: convite.id, instance: instance.trim() },
       {
-        onSuccess: (res) =>
-          setResultado({
+        onSuccess: (res) => {
+          setFinalizado(true);
+          onResultado({
             praedium: res.praedium,
             praedium_erro: res.praedium_erro,
             evolution: res.evolution,
             evolution_erro: res.evolution_erro,
             qrcode_base64: res.qrcode_base64,
-          }),
+          });
+        },
         onError: (err) => setErro((err as Error).message),
       },
     );
@@ -144,7 +148,7 @@ function ConviteRow({ convite }: { convite: Convite }) {
         </div>
       </div>
 
-      {convite.status === 'preenchido' && !resultado && (
+      {convite.status === 'preenchido' && !finalizado && (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1">
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Identificador único (instance)</label>
@@ -156,12 +160,11 @@ function ConviteRow({ convite }: { convite: Convite }) {
         </div>
       )}
       {erro && <p className="mt-2 text-sm text-red-600">{erro}</p>}
-      {resultado && <ResultadoCriacaoInfo resultado={resultado} />}
     </div>
   );
 }
 
-function ConvitesSection() {
+function ConvitesSection({ onResultado }: { onResultado: (r: ResultadoCriacao) => void }) {
   const { data, isLoading } = useConvitesAdmin();
   const criarConvite = useCreateConvite();
 
@@ -185,7 +188,7 @@ function ConvitesSection() {
       ) : (data?.data ?? []).length > 0 ? (
         <Card className="mt-3">
           {(data?.data ?? []).map((c) => (
-            <ConviteRow key={c.id} convite={c} />
+            <ConviteRow key={c.id} convite={c} onResultado={onResultado} />
           ))}
         </Card>
       ) : (
@@ -195,11 +198,10 @@ function ConvitesSection() {
   );
 }
 
-function CadastroDiretoSection() {
+function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCriacao) => void }) {
   const createCorretor = useCreateCorretor();
   const [form, setForm] = useState(estadoInicial());
   const [erro, setErro] = useState('');
-  const [resultado, setResultado] = useState<ResultadoCriacao | null>(null);
 
   function atualizarNome(nome: string) {
     setForm((f) => ({
@@ -233,7 +235,6 @@ function CadastroDiretoSection() {
       return;
     }
     setErro('');
-    setResultado(null);
     createCorretor.mutate(
       {
         instance: form.instance.trim(),
@@ -247,7 +248,7 @@ function CadastroDiretoSection() {
       },
       {
         onSuccess: (res) => {
-          setResultado({
+          onResultado({
             praedium: res.praedium,
             praedium_erro: res.praedium_erro,
             evolution: res.evolution,
@@ -354,7 +355,6 @@ function CadastroDiretoSection() {
           </div>
 
           {erro && <p className="text-sm text-red-600">{erro}</p>}
-          {resultado && <ResultadoCriacaoInfo resultado={resultado} />}
 
           <div className="flex justify-end">
             <Button onClick={enviar} disabled={createCorretor.isPending}>
@@ -367,13 +367,99 @@ function CadastroDiretoSection() {
   );
 }
 
+// Edita um corretor ja existente: pasta de teasers, admin, e regerar o QR
+// code do WhatsApp (pra quando o primeiro expirou antes de escanear, ou o
+// numero caiu). Fica num modal a parte -- assim o QR gerado aqui nao some
+// se a lista de corretores atualizar em segundo plano.
+// Recebe uma key={corretor.instance} do componente pai -- isso garante que
+// o React remonta esse componente do zero (resetando todos os useState)
+// sempre que o admin abre um corretor diferente, sem precisar sincronizar
+// estado manualmente a partir das props.
+function EditCorretorModal({ corretor, onClose }: { corretor: Corretor; onClose: () => void }) {
+  const atualizar = useUpdateCorretor();
+  const gerarQr = useGerarQrCodeCorretor();
+  const [drivePastaTeasers, setDrivePastaTeasers] = useState(corretor.drive_pasta_teasers || '');
+  const [isAdmin, setIsAdmin] = useState(corretor.is_admin);
+  const [erro, setErro] = useState('');
+  const [salvo, setSalvo] = useState(false);
+
+  function salvar() {
+    setErro('');
+    setSalvo(false);
+    atualizar.mutate(
+      { instance: corretor.instance, payload: { drive_pasta_teasers: drivePastaTeasers, is_admin: isAdmin } },
+      {
+        onSuccess: () => setSalvo(true),
+        onError: (err) => setErro((err as Error).message),
+      },
+    );
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Editar ${corretor.instance}`}>
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">ID da pasta de teasers no Google Drive</label>
+          <Input
+            value={drivePastaTeasers}
+            onChange={(e) => setDrivePastaTeasers(e.target.value)}
+            placeholder="cole aqui quando ela tiver a pasta criada"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} className="h-4 w-4" />
+          Administrador do painel
+        </label>
+
+        {erro && <p className="text-sm text-red-600">{erro}</p>}
+        {salvo && <p className="text-sm text-emerald-700">✅ Alterações salvas.</p>}
+
+        <div className="flex justify-end">
+          <Button onClick={salvar} disabled={atualizar.isPending}>
+            {atualizar.isPending ? 'Salvando...' : 'Salvar alterações'}
+          </Button>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">WhatsApp</p>
+          <Button variant="outline" onClick={() => gerarQr.mutate(corretor.instance)} disabled={gerarQr.isPending}>
+            {gerarQr.isPending ? 'Gerando...' : 'Gerar novo QR code'}
+          </Button>
+
+          {gerarQr.isError && (
+            <p className="mt-2 text-sm text-red-600">{(gerarQr.error as Error).message}</p>
+          )}
+          {gerarQr.data?.conectado && (
+            <p className="mt-2 text-sm text-emerald-700">✅ Esse número já está conectado ao WhatsApp.</p>
+          )}
+          {gerarQr.data?.qrcode_base64 && (
+            <div className="mt-2 rounded-md border border-border p-3">
+              <img
+                src={gerarQr.data.qrcode_base64}
+                alt="QR code para conectar o WhatsApp"
+                className="h-48 w-48 rounded-md border border-border"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Abrir WhatsApp → Aparelhos conectados → Conectar um aparelho, e escanear essa imagem.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function AdminCorretoresPage() {
   const { data, isLoading, isError, error } = useCorretoresAdmin();
+  const [resultadoModal, setResultadoModal] = useState<ResultadoCriacao | null>(null);
+  const [instanceEditando, setInstanceEditando] = useState<string | null>(null);
+  const corretorEditando = (data?.data ?? []).find((c) => c.instance === instanceEditando) ?? null;
 
   return (
     <div className="space-y-8">
-      <ConvitesSection />
-      <CadastroDiretoSection />
+      <ConvitesSection onResultado={setResultadoModal} />
+      <CadastroDiretoSection onResultado={setResultadoModal} />
 
       <div>
         <h2 className="text-base font-semibold">Corretores com acesso</h2>
@@ -388,7 +474,12 @@ export function AdminCorretoresPage() {
                   <p className="text-sm font-medium">{c.instance}</p>
                   <p className="truncate text-xs text-muted-foreground">{c.email}</p>
                 </div>
-                {c.is_admin && <Badge tone="default">Admin</Badge>}
+                <div className="flex items-center gap-2">
+                  {c.is_admin && <Badge tone="default">Admin</Badge>}
+                  <Button variant="outline" onClick={() => setInstanceEditando(c.instance)}>
+                    Editar
+                  </Button>
+                </div>
               </div>
             ))}
             {(data?.data ?? []).length === 0 && (
@@ -397,6 +488,14 @@ export function AdminCorretoresPage() {
           </Card>
         )}
       </div>
+
+      <Modal open={!!resultadoModal} onClose={() => setResultadoModal(null)} title="Corretor criado">
+        {resultadoModal && <ResultadoCriacaoInfo resultado={resultadoModal} />}
+      </Modal>
+
+      {corretorEditando && (
+        <EditCorretorModal key={corretorEditando.instance} corretor={corretorEditando} onClose={() => setInstanceEditando(null)} />
+      )}
     </div>
   );
 }

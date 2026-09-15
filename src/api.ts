@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabaseClient';
 import type {
+  AtualizarCorretorPayload,
   Campanha,
   Convite,
   Corretor,
@@ -15,6 +16,7 @@ import type {
   NovoCorretorPayload,
   NovoCorretorResultado,
   PreencherConvitePayload,
+  QrCodeResultado,
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -265,6 +267,27 @@ export function useCorretoresAdmin() {
   return useQuery({
     queryKey: ['admin-corretores'],
     queryFn: () => fetchJson<{ data: Corretor[] }>('/api/admin/corretores'),
+  });
+}
+
+export function useUpdateCorretor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ instance, payload }: { instance: string; payload: AtualizarCorretorPayload }) =>
+      fetchJson<{ ok: true; data: Corretor }>(`/api/admin/corretores/${encodeURIComponent(instance)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
+export function useGerarQrCodeCorretor() {
+  return useMutation({
+    mutationFn: (instance: string) =>
+      fetchJson<QrCodeResultado>(`/api/admin/corretores/${encodeURIComponent(instance)}/qrcode`, {
+        method: 'POST',
+      }),
   });
 }
 

@@ -97,6 +97,17 @@ export interface Corretor {
   instance: string;
   email: string | null;
   is_admin: boolean;
+  drive_pasta_teasers: string | null;
+}
+
+export interface AtualizarCorretorPayload {
+  drive_pasta_teasers?: string;
+  is_admin?: boolean;
+}
+
+export interface QrCodeResultado {
+  conectado: boolean;
+  qrcode_base64: string | null;
 }
 
 export interface NovoCorretorPayload {

@@ -1012,7 +1012,7 @@ app.get('/api/admin/corretores', requireAuth, requireAdmin, async (_req, res) =>
   try {
     const { data: perfis, error } = await supabase
       .from('corretor_perfis')
-      .select('user_id, instance, is_admin')
+      .select('user_id, instance, is_admin, drive_pasta_teasers')
       .order('instance');
     if (error) throw error;
 
@@ -1022,11 +1022,69 @@ app.get('/api/admin/corretores', requireAuth, requireAdmin, async (_req, res) =>
         return {
           instance: perfil.instance,
           is_admin: perfil.is_admin === true,
+          drive_pasta_teasers: perfil.drive_pasta_teasers || null,
           email: userData?.user?.email || null,
         };
       }),
     );
     res.json({ data: corretores });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Edita campos do corretor ja cadastrado -- por enquanto so os que moram no
+// Supabase (drive_pasta_teasers, is_admin). Login/senha do Praedium ficam no
+// n8n e ainda nao tem um jeito de editar por aqui.
+app.patch('/api/admin/corretores/:instance', requireAuth, requireAdmin, async (req, res) => {
+  const updates = {};
+  if (req.body.drive_pasta_teasers !== undefined) {
+    updates.drive_pasta_teasers = (req.body.drive_pasta_teasers || '').toString().trim() || null;
+  }
+  if (req.body.is_admin !== undefined) {
+    updates.is_admin = Boolean(req.body.is_admin);
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Nada para atualizar.' });
+  }
+  try {
+    const { data, error } = await supabase
+      .from('corretor_perfis')
+      .update(updates)
+      .eq('instance', req.params.instance)
+      .select('instance, is_admin, drive_pasta_teasers')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Corretor não encontrado.' });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Gera um QR code novo pra reconectar o WhatsApp de um corretor que ja tem
+// instancia criada na Evolution -- usa a mesma chave global, so que no
+// endpoint de connect (nao cria instancia de novo).
+app.post('/api/admin/corretores/:instance/qrcode', requireAuth, requireAdmin, async (req, res) => {
+  if (!EVOLUTION_API_URL || !EVOLUTION_API_GLOBAL_KEY) {
+    return res.status(500).json({ error: 'EVOLUTION_API_URL ou EVOLUTION_API_GLOBAL_KEY não configurados no painel.' });
+  }
+  try {
+    const resp = await fetchComTimeout(`${EVOLUTION_API_URL}/instance/connect/${encodeURIComponent(req.params.instance)}`, {
+      method: 'GET',
+      headers: { apikey: EVOLUTION_API_GLOBAL_KEY },
+    }, 15000);
+    const corpo = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return res.status(502).json({ error: corpo.message || corpo.error || `Evolution API respondeu ${resp.status}` });
+    }
+    if (!corpo.base64) {
+      // Ja conectado -- a Evolution nao manda QR code nesse caso.
+      return res.json({ conectado: true, qrcode_base64: null });
+    }
+    res.json({ conectado: false, qrcode_base64: corpo.base64 });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
