@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -56,17 +56,19 @@ function Coluna({
   etapa,
   leads,
   onSelectLead,
+  ativaNoMobile,
 }: {
   etapa: Etapa | { nome: string; cor: string | null };
   leads: Lead[];
   onSelectLead: (lead: Lead) => void;
+  ativaNoMobile: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: etapa.nome });
 
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-full flex-col rounded-lg border border-border bg-muted/30 p-3 md:w-72 md:shrink-0 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
+      className={`${ativaNoMobile ? 'flex' : 'hidden'} w-full flex-col rounded-lg border border-border bg-muted/30 p-3 md:flex md:w-72 md:shrink-0 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
     >
       <div className="mb-2 flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -89,6 +91,7 @@ function Coluna({
 
 export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLeadsProps) {
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
+  const [colunaAtivaMobile, setColunaAtivaMobile] = useState<string | null>(null);
   const { data, isLoading, isError, error } = useAllLeadsForKanban({
     status: status || undefined,
     origem: origem || undefined,
@@ -109,6 +112,16 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
     }
     return Array.from(map.values());
   }, [data, etapasData]);
+
+  // No celular so uma coluna fica visivel por vez (troca pela aba), entao
+  // sempre precisa ter uma selecionada -- reseta pra primeira se a atual
+  // sumiu (etapa excluida/renomeada) ou ainda nao tem nenhuma escolhida.
+  useEffect(() => {
+    if (colunas.length === 0) return;
+    if (!colunaAtivaMobile || !colunas.some(({ etapa }) => etapa.nome === colunaAtivaMobile)) {
+      setColunaAtivaMobile(colunas[0].etapa.nome);
+    }
+  }, [colunas, colunaAtivaMobile]);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveLead((event.active.data.current?.lead as Lead) ?? null);
@@ -133,9 +146,35 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="-mx-4 mb-3 flex snap-x snap-mandatory gap-2 overflow-x-auto px-4 pb-1 md:hidden">
+        {colunas.map(({ etapa, leads }) => (
+          <button
+            key={etapa.nome}
+            onClick={() => setColunaAtivaMobile(etapa.nome)}
+            className={`flex shrink-0 snap-start items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+              etapa.nome === colunaAtivaMobile
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-foreground'
+            }`}
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: etapa.cor ?? '#94a3b8' }} />
+            {etapa.nome}
+            <span className={etapa.nome === colunaAtivaMobile ? 'opacity-80' : 'text-muted-foreground'}>
+              {leads.length}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-col gap-3 pb-2 md:flex-row md:overflow-x-auto">
         {colunas.map(({ etapa, leads }) => (
-          <Coluna key={etapa.nome} etapa={etapa} leads={leads} onSelectLead={onSelectLead} />
+          <Coluna
+            key={etapa.nome}
+            etapa={etapa}
+            leads={leads}
+            onSelectLead={onSelectLead}
+            ativaNoMobile={etapa.nome === colunaAtivaMobile}
+          />
         ))}
       </div>
       <DragOverlay>{activeLead ? <LeadCard lead={activeLead} onSelectLead={() => {}} /> : null}</DragOverlay>
