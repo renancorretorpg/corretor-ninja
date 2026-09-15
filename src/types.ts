@@ -78,6 +78,15 @@ export interface NovaCampanhaPayload {
   agendamento_data?: string;
 }
 
+export interface NovoLeadPayload {
+  nome: string;
+  sobrenome?: string;
+  numero: string;
+  status?: string;
+  origem?: string;
+  notas?: string;
+}
+
 export interface LeadsFilters {
   page: number;
   pageSize: number;

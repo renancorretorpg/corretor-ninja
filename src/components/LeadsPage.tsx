@@ -3,6 +3,7 @@ import { ListaLeads } from './ListaLeads';
 import { KanbanLeads } from './KanbanLeads';
 import { Filtros } from './Filtros';
 import { LeadDetailModal } from './LeadDetailModal';
+import { NovoLeadModal } from './NovoLeadModal';
 import { Button } from './ui';
 import type { Lead } from '../types';
 
@@ -21,6 +22,7 @@ export function LeadsPage() {
   const [status, setStatus] = useState('');
   const [origem, setOrigem] = useState('');
   const [leadSelecionado, setLeadSelecionado] = useState<Lead | null>(null);
+  const [novoLeadAberto, setNovoLeadAberto] = useState(false);
 
   function trocarModo(novoModo: Modo) {
     setModo(novoModo);
@@ -38,21 +40,24 @@ export function LeadsPage() {
           origem={origem}
           onOrigemChange={setOrigem}
         />
-        <div className="flex gap-1 rounded-lg border border-border p-1">
-          <Button
-            className="flex-1 sm:flex-none"
-            variant={modo === 'lista' ? 'default' : 'ghost'}
-            onClick={() => trocarModo('lista')}
-          >
-            Lista
-          </Button>
-          <Button
-            className="flex-1 sm:flex-none"
-            variant={modo === 'kanban' ? 'default' : 'ghost'}
-            onClick={() => trocarModo('kanban')}
-          >
-            Kanban
-          </Button>
+        <div className="flex gap-2">
+          <div className="flex flex-1 gap-1 rounded-lg border border-border p-1 sm:flex-none">
+            <Button
+              className="flex-1 sm:flex-none"
+              variant={modo === 'lista' ? 'default' : 'ghost'}
+              onClick={() => trocarModo('lista')}
+            >
+              Lista
+            </Button>
+            <Button
+              className="flex-1 sm:flex-none"
+              variant={modo === 'kanban' ? 'default' : 'ghost'}
+              onClick={() => trocarModo('kanban')}
+            >
+              Kanban
+            </Button>
+          </div>
+          <Button onClick={() => setNovoLeadAberto(true)}>Novo lead</Button>
         </div>
       </div>
 
@@ -63,6 +68,7 @@ export function LeadsPage() {
       )}
 
       <LeadDetailModal lead={leadSelecionado} onClose={() => setLeadSelecionado(null)} />
+      <NovoLeadModal open={novoLeadAberto} onClose={() => setNovoLeadAberto(false)} />
     </div>
   );
 }

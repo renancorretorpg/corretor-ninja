@@ -15,6 +15,7 @@ import type {
   NovaCampanhaPayload,
   NovoCorretorPayload,
   NovoCorretorResultado,
+  NovoLeadPayload,
   PreencherConvitePayload,
   QrCodeResultado,
 } from './types';
@@ -87,6 +88,23 @@ export function useOrigens() {
   return useQuery({
     queryKey: ['origens'],
     queryFn: () => fetchJson<{ origens: string[] }>('/api/leads/origens'),
+  });
+}
+
+export function useCreateLead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NovoLeadPayload) =>
+      fetchJson<{ data: Lead }>('/api/leads', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leads-kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['statuses'] });
+      queryClient.invalidateQueries({ queryKey: ['origens'] });
+    },
   });
 }
 

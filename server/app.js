@@ -183,13 +183,20 @@ app.get('/api/leads/origens', requireAuth, async (req, res) => {
 app.patch('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const allowedFields = ['status', 'notas', 'nome', 'sobrenome', 'origem'];
+    const allowedFields = ['status', 'notas', 'nome', 'sobrenome', 'origem', 'numero'];
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar.' });
+    }
+
+    if (updates.numero !== undefined) {
+      updates.numero = String(updates.numero).replace(/\D/g, '');
+      if (!updates.numero) {
+        return res.status(400).json({ error: 'Telefone inválido.' });
+      }
     }
 
     // So valida contra a lista de etapas se ela ja existir -- numa conta nova
@@ -247,6 +254,81 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Lead não encontrado.' });
     }
     res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// POST /api/leads — cadastro manual pelo corretor (leads que normalmente
+// chegam via WhatsApp/n8n, mas que ele quer adicionar direto no painel).
+app.post('/api/leads', requireAuth, async (req, res) => {
+  try {
+    const nome = (req.body.nome || '').toString().trim();
+    const sobrenome = (req.body.sobrenome || '').toString().trim();
+    const numero = (req.body.numero || '').toString().replace(/\D/g, '');
+    const origem = (req.body.origem || '').toString().trim();
+    const notas = (req.body.notas || '').toString().trim();
+    let status = (req.body.status || '').toString().trim();
+
+    if (!nome) {
+      return res.status(400).json({ error: 'Nome é obrigatório.' });
+    }
+    if (!numero) {
+      return res.status(400).json({ error: 'Telefone é obrigatório.' });
+    }
+
+    // Mesma regra do PATCH: so exige bater com uma etapa cadastrada se a
+    // instance ja tiver etapas (conta nova pode nao ter nenhuma ainda).
+    const { count: etapasCount, error: etapasError } = await supabase
+      .from('etapas')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', req.instance);
+    if (etapasError) throw etapasError;
+    if ((etapasCount ?? 0) > 0) {
+      if (!status) {
+        return res.status(400).json({ error: 'Selecione a etapa do lead.' });
+      }
+      const { data: etapaExistente, error: checkError } = await supabase
+        .from('etapas')
+        .select('id')
+        .eq('instance', req.instance)
+        .eq('nome', status)
+        .maybeSingle();
+      if (checkError) throw checkError;
+      if (!etapaExistente) {
+        return res.status(400).json({ error: `Etapa "${status}" não existe.` });
+      }
+    } else if (!status) {
+      status = 'novo';
+    }
+
+    const { data: existente } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('instance', req.instance)
+      .eq('numero', numero)
+      .maybeSingle();
+    if (existente) {
+      return res.status(409).json({ error: 'Já existe um lead cadastrado com esse telefone.' });
+    }
+
+    const { data, error } = await supabase
+      .from('leads')
+      .insert({
+        instance: req.instance,
+        nome,
+        sobrenome: sobrenome || null,
+        numero,
+        status,
+        origem: origem || null,
+        notas: notas || null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ data });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
