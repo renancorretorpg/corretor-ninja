@@ -24,7 +24,7 @@ import {
 import type { Etapa } from '../types';
 import { Button, Card, Input, Modal, Select } from './ui';
 
-const MAX_ETAPAS = 12;
+const MAX_ETAPAS = 30;
 const COR_PADRAO = '#3b82f6';
 
 function EtapaRow({
@@ -92,11 +92,11 @@ function EtapaRow({
       <div
         ref={setNodeRef}
         style={style}
-        className={`flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0 ${isDragging ? 'opacity-50' : ''}`}
+        className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 sm:flex-nowrap sm:gap-3 ${isDragging ? 'opacity-50' : ''}`}
       >
         <button
           type="button"
-          className="cursor-grab touch-none px-1 text-muted-foreground active:cursor-grabbing"
+          className="flex h-11 w-8 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground active:cursor-grabbing"
           {...attributes}
           {...listeners}
         >
@@ -122,21 +122,25 @@ function EtapaRow({
                 setEditando(false);
               }
             }}
-            className="max-w-xs"
+            className="min-w-[120px] flex-1 sm:max-w-xs"
           />
         ) : (
           <button
             type="button"
-            className="flex-1 text-left text-sm font-medium hover:underline"
+            className="min-w-[100px] flex-1 truncate text-left text-sm font-medium hover:underline"
             onClick={() => setEditando(true)}
           >
             {etapa.nome}
           </button>
         )}
-        <span className="text-xs text-muted-foreground">
+        <span className="order-1 shrink-0 text-xs text-muted-foreground sm:order-none">
           {etapa.leadCount} {etapa.leadCount === 1 ? 'lead' : 'leads'}
         </span>
-        <Button variant="ghost" onClick={pedirRemocao} className="text-red-600 hover:bg-red-50">
+        <Button
+          variant="ghost"
+          onClick={pedirRemocao}
+          className="order-2 shrink-0 text-red-600 hover:bg-red-50 sm:order-none"
+        >
           Remover
         </Button>
       </div>
@@ -159,7 +163,7 @@ function EtapaRow({
                 </option>
               ))}
             </Select>
-            <div className="mt-3 flex justify-end gap-2">
+            <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="outline" onClick={() => setConfirmando(false)}>
                 Cancelar
               </Button>
@@ -224,14 +228,14 @@ export function EtapasPage() {
         Essas etapas definem as colunas do Kanban e os filtros da página de Leads. Arraste para reordenar.
       </p>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <Input
           placeholder="Nome da nova etapa..."
           value={novoNome}
           onChange={(e) => setNovoNome(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && adicionarEtapa()}
           disabled={atingiuLimite}
-          className="max-w-xs"
+          className="w-full sm:max-w-xs"
         />
         <Button onClick={adicionarEtapa} disabled={atingiuLimite || createEtapa.isPending}>
           Adicionar etapa

@@ -240,7 +240,7 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
   }
 });
 
-const MAX_ETAPAS = 12;
+const MAX_ETAPAS = 30;
 const PALETA_CORES = [
   '#64748b', '#3b82f6', '#f59e0b', '#8b5cf6',
   '#10b981', '#ef4444', '#06b6d4', '#ec4899',

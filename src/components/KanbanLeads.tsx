@@ -66,7 +66,7 @@ function Coluna({
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-72 shrink-0 flex-col rounded-lg border border-border bg-muted/30 p-3 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
+      className={`flex w-full flex-col rounded-lg border border-border bg-muted/30 p-3 md:w-72 md:shrink-0 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
     >
       <div className="mb-2 flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -133,7 +133,7 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className="flex flex-col gap-3 pb-2 md:flex-row md:overflow-x-auto">
         {colunas.map(({ etapa, leads }) => (
           <Coluna key={etapa.nome} etapa={etapa} leads={leads} onSelectLead={onSelectLead} />
         ))}

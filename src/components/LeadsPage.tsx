@@ -29,7 +29,7 @@ export function LeadsPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Filtros
           search={search}
           onSearchChange={setSearch}
@@ -39,10 +39,18 @@ export function LeadsPage() {
           onOrigemChange={setOrigem}
         />
         <div className="flex gap-1 rounded-lg border border-border p-1">
-          <Button variant={modo === 'lista' ? 'default' : 'ghost'} onClick={() => trocarModo('lista')}>
+          <Button
+            className="flex-1 sm:flex-none"
+            variant={modo === 'lista' ? 'default' : 'ghost'}
+            onClick={() => trocarModo('lista')}
+          >
             Lista
           </Button>
-          <Button variant={modo === 'kanban' ? 'default' : 'ghost'} onClick={() => trocarModo('kanban')}>
+          <Button
+            className="flex-1 sm:flex-none"
+            variant={modo === 'kanban' ? 'default' : 'ghost'}
+            onClick={() => trocarModo('kanban')}
+          >
             Kanban
           </Button>
         </div>

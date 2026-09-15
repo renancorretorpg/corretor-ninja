@@ -60,7 +60,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
             placeholder="EXCLUIR"
             autoFocus
           />
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setConfirmandoExclusao(false)}>
               Voltar
             </Button>
@@ -85,7 +85,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           <span>Atualizado em {formatDataHora(lead.updated_at)}</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Nome</label>
             <Input value={nome} onChange={(e) => setNome(e.target.value)} />
@@ -96,7 +96,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Etapa</label>
             <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full">
@@ -146,7 +146,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           )}
         </div>
 
-        <div className="flex items-center justify-between pt-2">
+        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
           <Button
             variant="ghost"
             className="text-red-600 hover:bg-red-50"
@@ -155,7 +155,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           >
             Excluir lead
           </Button>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex">
             <Button variant="outline" onClick={onClose}>
               Cancelar
             </Button>

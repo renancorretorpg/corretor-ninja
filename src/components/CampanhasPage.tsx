@@ -77,7 +77,7 @@ function WizardMensagens({
       </p>
       <div className="space-y-2">
         {mensagens.map((m, i) => (
-          <div key={i} className="flex items-start gap-2">
+          <div key={i} className="flex flex-col gap-2 sm:flex-row sm:items-start">
             <textarea
               value={m}
               onChange={(e) => atualizar(i, e.target.value)}
@@ -86,7 +86,11 @@ function WizardMensagens({
               className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             />
             {mensagens.length > MIN_MENSAGENS && (
-              <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => remover(i)}>
+              <Button
+                variant="ghost"
+                className="self-end text-red-600 hover:bg-red-50 sm:self-auto"
+                onClick={() => remover(i)}
+              >
                 Remover
               </Button>
             )}
@@ -163,7 +167,7 @@ function WizardImagens({
       ) : data.imagens.length === 0 ? (
         <p className="mb-3 text-sm text-muted-foreground">Nenhuma imagem na sua pasta do Drive ainda — envie uma abaixo.</p>
       ) : (
-        <div className="mb-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
+        <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {data.imagens.map((img) => {
             const ativa = selecionadas.some((s) => s.id === img.id);
             const bloqueada = !ativa && selecionadas.length >= MAX_IMAGENS;
@@ -237,23 +241,23 @@ function WizardDestinatarios({
 
   return (
     <div>
-      <div className="mb-3 flex flex-col gap-2">
-        <label className="flex items-center gap-2 text-sm">
+      <div className="mb-3 flex flex-col gap-1">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm">
           <input type="radio" checked={modo === 'todos'} onChange={() => onModoChange('todos')} />
           Todos os contatos
         </label>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm">
           <input type="radio" checked={modo === 'etapa'} onChange={() => onModoChange('etapa')} />
           Por etapa do funil
         </label>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm">
           <input type="radio" checked={modo === 'manual'} onChange={() => onModoChange('manual')} />
           Selecionar um a um
         </label>
       </div>
 
       {modo === 'etapa' && (
-        <Select value={etapa ?? ''} onChange={(e) => onEtapaChange(e.target.value)} className="mb-3 w-full max-w-xs">
+        <Select value={etapa ?? ''} onChange={(e) => onEtapaChange(e.target.value)} className="mb-3 w-full sm:max-w-xs">
           <option value="">Selecione a etapa...</option>
           {etapasData?.data.map((et) => (
             <option key={et.id} value={et.nome}>
@@ -269,16 +273,16 @@ function WizardDestinatarios({
             placeholder="Buscar por nome ou telefone..."
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            className="max-w-xs"
+            className="w-full sm:max-w-xs"
           />
           {buscaData && buscaData.data.length > 0 && (
-            <div className="mt-2 max-h-40 max-w-md overflow-y-auto rounded-md border border-border">
+            <div className="mt-2 max-h-40 w-full overflow-y-auto rounded-md border border-border sm:max-w-md">
               {buscaData.data.map((lead) => (
                 <button
                   key={lead.id}
                   type="button"
                   onClick={() => alternarLead(lead)}
-                  className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-muted"
+                  className="flex min-h-[44px] w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-muted"
                 >
                   <span>
                     {lead.nome} {lead.sobrenome ?? ''} · {formatTelefone(lead.numero)}
@@ -325,12 +329,12 @@ function WizardAgendamento({
   onDataChange: (v: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="flex items-center gap-2 text-sm">
+    <div className="flex flex-col gap-1">
+      <label className="flex min-h-[44px] items-center gap-2 text-sm">
         <input type="radio" checked={tipo === 'imediato'} onChange={() => onTipoChange('imediato')} />
         Disparar imediatamente
       </label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex min-h-[44px] items-center gap-2 text-sm">
         <input type="radio" checked={tipo === 'agendado'} onChange={() => onTipoChange('agendado')} />
         Agendar para depois
       </label>
@@ -339,7 +343,7 @@ function WizardAgendamento({
           type="datetime-local"
           value={data}
           onChange={(e) => onDataChange(e.target.value)}
-          className="mt-1 h-9 w-56 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+          className="mt-1 h-11 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 sm:w-56"
         />
       )}
     </div>
@@ -423,11 +427,19 @@ export function CampanhasPage() {
 
   return (
     <div>
-      <div className="mb-4 flex gap-1 rounded-lg border border-border p-1" style={{ width: 'fit-content' }}>
-        <Button variant={aba === 'nova' ? 'default' : 'ghost'} onClick={() => setAba('nova')}>
+      <div className="mb-4 flex gap-1 rounded-lg border border-border p-1 sm:w-fit">
+        <Button
+          className="flex-1 sm:flex-none"
+          variant={aba === 'nova' ? 'default' : 'ghost'}
+          onClick={() => setAba('nova')}
+        >
           Nova campanha
         </Button>
-        <Button variant={aba === 'historico' ? 'default' : 'ghost'} onClick={() => setAba('historico')}>
+        <Button
+          className="flex-1 sm:flex-none"
+          variant={aba === 'historico' ? 'default' : 'ghost'}
+          onClick={() => setAba('historico')}
+        >
           Histórico
         </Button>
       </div>
@@ -436,7 +448,7 @@ export function CampanhasPage() {
         <HistoricoCampanhas />
       ) : (
         <Card className="p-4">
-          <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             {passos.map((p, i) => (
               <span key={p} className={`flex items-center gap-2 ${i + 1 === etapaAtual ? 'font-semibold text-foreground' : ''}`}>
                 {i > 0 && <span>→</span>}
@@ -470,19 +482,19 @@ export function CampanhasPage() {
             />
           )}
           {etapaAtual === 5 && (
-            <div className="space-y-3 text-sm">
+            <div className="space-y-3 break-words text-sm">
               <div>
                 <Input
                   placeholder="Nome interno da campanha (opcional)"
                   value={draft.nome}
                   onChange={(e) => setDraft({ ...draft, nome: e.target.value })}
-                  className="max-w-sm"
+                  className="w-full sm:max-w-sm"
                 />
               </div>
               <p>
                 <strong>{draft.mensagens.map((m) => m.trim()).filter(Boolean).length}</strong> variantes de mensagem
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {draft.imagens.length === 0 ? (
                   <span className="text-muted-foreground">Sem imagens (só texto)</span>
                 ) : (
@@ -516,7 +528,7 @@ export function CampanhasPage() {
 
           {erro && <p className="mt-3 text-sm text-red-600">{erro}</p>}
 
-          <div className="mt-4 flex justify-between">
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
             <Button variant="outline" onClick={voltar} disabled={etapaAtual === 1}>
               Voltar
             </Button>
@@ -551,8 +563,11 @@ function HistoricoCampanhas() {
   return (
     <Card>
       {data.data.map((c) => (
-        <div key={c.id} className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 last:border-b-0">
-          <div>
+        <div
+          key={c.id}
+          className="flex flex-col gap-2 border-b border-border px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+        >
+          <div className="min-w-0">
             <p className="text-sm font-medium">{c.nome}</p>
             <p className="text-xs text-muted-foreground">
               {destinatariosDescricao(c)} ·{' '}

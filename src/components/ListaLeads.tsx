@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-table';
 import { useLeads } from '../api';
 import type { Lead } from '../types';
-import { Badge, Button, Select } from './ui';
+import { Badge, Button, Card, Select } from './ui';
 import { formatData, formatTelefone, statusTone } from '../utils';
 
 const columnHelper = createColumnHelper<Lead>();
@@ -89,9 +89,12 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
     return <p className="text-sm text-red-600">Erro ao carregar leads: {(error as Error).message}</p>;
   }
 
+  const linhas = table.getRowModel().rows;
+
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-lg border border-border">
+      {/* Tabela: md e acima */}
+      <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (
@@ -117,14 +120,14 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
                 </td>
               </tr>
             )}
-            {!isLoading && table.getRowModel().rows.length === 0 && (
+            {!isLoading && linhas.length === 0 && (
               <tr>
                 <td colSpan={columns.length} className="px-3 py-6 text-center text-muted-foreground">
                   Nenhum lead encontrado.
                 </td>
               </tr>
             )}
-            {table.getRowModel().rows.map((row) => (
+            {linhas.map((row) => (
               <tr
                 key={row.id}
                 className="cursor-pointer border-t border-border hover:bg-muted/30"
@@ -141,8 +144,39 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center gap-2 text-muted-foreground">
+      {/* Cards empilhados: abaixo de md */}
+      <div className="space-y-2 md:hidden">
+        {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Carregando...</p>}
+        {!isLoading && linhas.length === 0 && (
+          <p className="py-6 text-center text-sm text-muted-foreground">Nenhum lead encontrado.</p>
+        )}
+        {linhas.map((row) => {
+          const lead = row.original;
+          return (
+            <Card
+              key={row.id}
+              className="min-h-[44px] cursor-pointer p-3 active:bg-muted/40"
+              onClick={() => onSelectLead(lead)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {lead.nome} {lead.sobrenome ?? ''}
+                </p>
+                <Badge tone={statusTone(lead.status)}>{lead.status}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{formatTelefone(lead.numero)}</p>
+              {lead.origem && <p className="mt-1 text-xs text-muted-foreground">Imóvel: {lead.origem}</p>}
+              <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Último contato: {formatData(lead.updated_at)}</span>
+                <span>Entrada: {formatData(lead.created_at)}</span>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
           <span>
             {total} lead{total === 1 ? '' : 's'} · página {page} de {totalPages}
           </span>
@@ -153,10 +187,20 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
           </Select>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+          <Button
+            variant="outline"
+            className="flex-1 sm:flex-none"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+          >
             Anterior
           </Button>
-          <Button variant="outline" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+          <Button
+            variant="outline"
+            className="flex-1 sm:flex-none"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+          >
             Próxima
           </Button>
         </div>

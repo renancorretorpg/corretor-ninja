@@ -1,11 +1,11 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from 'react';
 
 export function Button({
   className = '',
   variant = 'default',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'default' | 'outline' | 'ghost' }) {
-  const base = 'inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors px-3 py-1.5 disabled:opacity-50 disabled:pointer-events-none';
+  const base = 'inline-flex min-h-[44px] items-center justify-center rounded-md text-sm font-medium transition-colors px-3 py-1.5 disabled:opacity-50 disabled:pointer-events-none';
   const variants = {
     default: 'bg-primary text-primary-foreground hover:opacity-90',
     outline: 'border border-border bg-background hover:bg-muted',
@@ -17,7 +17,7 @@ export function Button({
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+      className="flex h-11 w-full rounded-md border border-border bg-background px-3 py-1 text-sm outline-none focus:ring-2 focus:ring-primary/30"
       {...props}
     />
   );
@@ -26,7 +26,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 export function Select({ className = '', ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 ${className}`}
+      className={`h-11 rounded-md border border-border bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 ${className}`}
       {...props}
     />
   );
@@ -47,9 +47,9 @@ export function Badge({ children, tone = 'default' }: { children: React.ReactNod
   );
 }
 
-export function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+export function Card({ children, className = '', ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={`rounded-lg border border-border bg-card text-card-foreground shadow-sm ${className}`}>
+    <div className={`rounded-lg border border-border bg-card text-card-foreground shadow-sm ${className}`} {...props}>
       {children}
     </div>
   );

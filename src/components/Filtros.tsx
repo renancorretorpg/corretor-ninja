@@ -15,14 +15,14 @@ export function Filtros({ search, onSearchChange, status, onStatusChange, origem
   const { data: origensData } = useOrigens();
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <Input
         placeholder="Buscar por nome ou telefone..."
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
-        className="max-w-xs"
+        className="w-full sm:max-w-xs"
       />
-      <Select value={status} onChange={(e) => onStatusChange(e.target.value)}>
+      <Select value={status} onChange={(e) => onStatusChange(e.target.value)} className="w-full sm:w-auto">
         <option value="">Todas as etapas</option>
         {etapasData?.data.map((e) => (
           <option key={e.id} value={e.nome}>
@@ -30,7 +30,7 @@ export function Filtros({ search, onSearchChange, status, onStatusChange, origem
           </option>
         ))}
       </Select>
-      <Select value={origem} onChange={(e) => onOrigemChange(e.target.value)}>
+      <Select value={origem} onChange={(e) => onOrigemChange(e.target.value)} className="w-full sm:w-auto">
         <option value="">Todas as origens</option>
         {origensData?.origens.map((o) => (
           <option key={o} value={o}>
