@@ -7,7 +7,7 @@ import {
   useDeleteConvite,
   useFinalizarConvite,
 } from '../api';
-import type { Convite } from '../types';
+import type { Convite, NovoCorretorResultado } from '../types';
 import { Badge, Button, Card, Input } from './ui';
 
 function slugify(nome: string): string {
@@ -36,12 +36,49 @@ function estadoInicial() {
   };
 }
 
+type ResultadoCriacao = Pick<
+  NovoCorretorResultado,
+  'praedium' | 'praedium_erro' | 'evolution' | 'evolution_erro' | 'qrcode_base64'
+>;
+
+// Mostra o status do Praedium + o QR code da Evolution (quando gerado) pro
+// admin encaminhar pro corretor conectar o WhatsApp.
+function ResultadoCriacaoInfo({ resultado }: { resultado: ResultadoCriacao }) {
+  return (
+    <div className="mt-3 space-y-2">
+      <p className={`text-sm ${resultado.praedium === 'criado' ? 'text-emerald-700' : 'text-amber-700'}`}>
+        {resultado.praedium === 'criado'
+          ? '✅ Corretor aprovado — acesso ao painel e login do Praedium salvos com sucesso.'
+          : `⚠️ Acesso ao painel criado, mas o login do Praedium não foi salvo (${resultado.praedium_erro}).`}
+      </p>
+      {resultado.evolution === 'criado' && resultado.qrcode_base64 ? (
+        <div className="rounded-md border border-border p-3">
+          <p className="text-sm font-medium">📱 QR code do WhatsApp gerado — encaminhe pro corretor escanear:</p>
+          <img
+            src={resultado.qrcode_base64}
+            alt="QR code para conectar o WhatsApp"
+            className="mt-2 h-48 w-48 rounded-md border border-border"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Abrir WhatsApp → Aparelhos conectados → Conectar um aparelho, e escanear essa imagem.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-amber-700">
+          ⚠️ Não foi possível gerar o QR code do WhatsApp ({resultado.evolution_erro}). Pode gerar manualmente
+          depois pelo Evolution Manager.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ConviteRow({ convite }: { convite: Convite }) {
   const finalizar = useFinalizarConvite();
   const deletar = useDeleteConvite();
   const [instance, setInstance] = useState(slugify(convite.nome_corretor || ''));
   const [erro, setErro] = useState('');
-  const [resultado, setResultado] = useState<{ praedium: 'criado' | 'falhou'; praedium_erro: string | null } | null>(null);
+  const [resultado, setResultado] = useState<ResultadoCriacao | null>(null);
   const [copiado, setCopiado] = useState(false);
 
   function copiarLink() {
@@ -64,7 +101,14 @@ function ConviteRow({ convite }: { convite: Convite }) {
     finalizar.mutate(
       { id: convite.id, instance: instance.trim() },
       {
-        onSuccess: (res) => setResultado({ praedium: res.praedium, praedium_erro: res.praedium_erro }),
+        onSuccess: (res) =>
+          setResultado({
+            praedium: res.praedium,
+            praedium_erro: res.praedium_erro,
+            evolution: res.evolution,
+            evolution_erro: res.evolution_erro,
+            qrcode_base64: res.qrcode_base64,
+          }),
         onError: (err) => setErro((err as Error).message),
       },
     );
@@ -112,13 +156,7 @@ function ConviteRow({ convite }: { convite: Convite }) {
         </div>
       )}
       {erro && <p className="mt-2 text-sm text-red-600">{erro}</p>}
-      {resultado && (
-        <p className={`mt-2 text-sm ${resultado.praedium === 'criado' ? 'text-emerald-700' : 'text-amber-700'}`}>
-          {resultado.praedium === 'criado'
-            ? '✅ Corretor aprovado — acesso ao painel e login do Praedium salvos com sucesso.'
-            : `⚠️ Acesso ao painel criado, mas o login do Praedium não foi salvo (${resultado.praedium_erro}).`}
-        </p>
-      )}
+      {resultado && <ResultadoCriacaoInfo resultado={resultado} />}
     </div>
   );
 }
@@ -161,7 +199,7 @@ function CadastroDiretoSection() {
   const createCorretor = useCreateCorretor();
   const [form, setForm] = useState(estadoInicial());
   const [erro, setErro] = useState('');
-  const [resultado, setResultado] = useState<{ praedium: 'criado' | 'falhou'; praedium_erro: string | null } | null>(null);
+  const [resultado, setResultado] = useState<ResultadoCriacao | null>(null);
 
   function atualizarNome(nome: string) {
     setForm((f) => ({
@@ -209,7 +247,13 @@ function CadastroDiretoSection() {
       },
       {
         onSuccess: (res) => {
-          setResultado({ praedium: res.praedium, praedium_erro: res.praedium_erro });
+          setResultado({
+            praedium: res.praedium,
+            praedium_erro: res.praedium_erro,
+            evolution: res.evolution,
+            evolution_erro: res.evolution_erro,
+            qrcode_base64: res.qrcode_base64,
+          });
           setForm(estadoInicial());
         },
         onError: (err) => setErro((err as Error).message),
@@ -310,13 +354,7 @@ function CadastroDiretoSection() {
           </div>
 
           {erro && <p className="text-sm text-red-600">{erro}</p>}
-          {resultado && (
-            <p className={`text-sm ${resultado.praedium === 'criado' ? 'text-emerald-700' : 'text-amber-700'}`}>
-              {resultado.praedium === 'criado'
-                ? '✅ Corretor cadastrado — acesso ao painel e login do Praedium salvos com sucesso.'
-                : `⚠️ Acesso ao painel criado, mas o login do Praedium não foi salvo (${resultado.praedium_erro}). Tente de novo pelo comando "CRM" no WhatsApp assim que o corretor estiver com o número conectado.`}
-            </p>
-          )}
+          {resultado && <ResultadoCriacaoInfo resultado={resultado} />}
 
           <div className="flex justify-end">
             <Button onClick={enviar} disabled={createCorretor.isPending}>

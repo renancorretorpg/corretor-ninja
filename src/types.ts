@@ -116,6 +116,9 @@ export interface NovoCorretorResultado {
   painel: 'criado';
   praedium: 'criado' | 'falhou';
   praedium_erro: string | null;
+  evolution: 'criado' | 'falhou';
+  evolution_erro: string | null;
+  qrcode_base64: string | null;
 }
 
 export type ConviteStatus = 'pendente' | 'preenchido' | 'finalizado';

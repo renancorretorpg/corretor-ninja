@@ -16,6 +16,8 @@ const {
   N8N_CRIAR_CLIENTE_WEBHOOK_URL,
   N8N_WEBHOOK_SECRET,
   PANEL_PUBLIC_URL,
+  EVOLUTION_API_URL,
+  EVOLUTION_API_GLOBAL_KEY,
 } = process.env;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -1041,6 +1043,30 @@ function validarDadosCorretor(d) {
   return null;
 }
 
+// Cria a instancia do corretor na Evolution API (global key, so usada aqui)
+// e devolve o apikey proprio da instancia + o QR code (base64) pra conectar
+// o WhatsApp. Falha aqui nao interrompe o cadastro -- o admin pode gerar o
+// QR de novo depois, manualmente, se precisar.
+async function criarInstanciaEvolution(instance) {
+  if (!EVOLUTION_API_URL || !EVOLUTION_API_GLOBAL_KEY) {
+    return { ok: false, erro: 'EVOLUTION_API_URL ou EVOLUTION_API_GLOBAL_KEY não configurados no painel.' };
+  }
+  try {
+    const resp = await fetchComTimeout(`${EVOLUTION_API_URL}/instance/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_GLOBAL_KEY },
+      body: JSON.stringify({ instanceName: instance, integration: 'WHATSAPP-BAILEYS', qrcode: true }),
+    }, 15000);
+    const corpo = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return { ok: false, erro: corpo.message || corpo.error || `Evolution API respondeu ${resp.status}` };
+    }
+    return { ok: true, apikey: corpo.hash || '', qrcodeBase64: corpo.qrcode?.base64 || null };
+  } catch (err) {
+    return { ok: false, erro: err.message };
+  }
+}
+
 // Usada tanto pelo cadastro direto quanto pela finalizacao de um convite:
 // cria o login do painel (Supabase Auth), o vinculo em corretor_perfis, e
 // manda o login/senha do Praedium pro n8n (que criptografa e salva na
@@ -1081,6 +1107,8 @@ async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, wha
     throw perfilError;
   }
 
+  const evolucao = await criarInstanciaEvolution(instance);
+
   let n8nOk = false;
   let n8nErro = null;
   if (N8N_CRIAR_CLIENTE_WEBHOOK_URL) {
@@ -1095,6 +1123,8 @@ async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, wha
           crm_login: crmLogin,
           crm_senha: crmSenha,
           drive_pasta_teasers: drivePastaTeasers || '',
+          evolution_apikey: evolucao.ok ? evolucao.apikey : '',
+          evolution_server_url: evolucao.ok ? EVOLUTION_API_URL : '',
         }),
       }, 10000);
       n8nOk = resp.ok;
@@ -1109,7 +1139,14 @@ async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, wha
     n8nErro = 'N8N_CRIAR_CLIENTE_WEBHOOK_URL não configurado no painel.';
   }
 
-  return { instance, praedium: n8nOk ? 'criado' : 'falhou', praedium_erro: n8nOk ? null : n8nErro };
+  return {
+    instance,
+    praedium: n8nOk ? 'criado' : 'falhou',
+    praedium_erro: n8nOk ? null : n8nErro,
+    evolution: evolucao.ok ? 'criado' : 'falhou',
+    evolution_erro: evolucao.ok ? null : evolucao.erro,
+    qrcode_base64: evolucao.ok ? evolucao.qrcodeBase64 : null,
+  };
 }
 
 app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) => {
