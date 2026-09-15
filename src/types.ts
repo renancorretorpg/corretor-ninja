@@ -87,3 +87,32 @@ export interface LeadsFilters {
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
 }
+
+export interface Me {
+  instance: string;
+  is_admin: boolean;
+}
+
+export interface Corretor {
+  instance: string;
+  email: string | null;
+  is_admin: boolean;
+}
+
+export interface NovoCorretorPayload {
+  instance: string;
+  nome_corretor: string;
+  email: string;
+  senha: string;
+  whatsapp_numero: string;
+  crm_login: string;
+  crm_senha: string;
+}
+
+export interface NovoCorretorResultado {
+  ok: true;
+  instance: string;
+  painel: 'criado';
+  praedium: 'criado' | 'falhou';
+  praedium_erro: string | null;
+}

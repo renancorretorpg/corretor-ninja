@@ -2,13 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabaseClient';
 import type {
   Campanha,
+  Corretor,
   DestinatariosModo,
   Etapa,
   ImagemDrive,
   Lead,
   LeadsFilters,
   LeadsResponse,
+  Me,
   NovaCampanhaPayload,
+  NovoCorretorPayload,
+  NovoCorretorResultado,
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -245,5 +249,31 @@ export function useCancelarCampanha() {
   return useMutation({
     mutationFn: (id: number) => fetchJson<{ ok: true }>(`/api/campanhas/${id}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campanhas'] }),
+  });
+}
+
+export function useMe() {
+  return useQuery({
+    queryKey: ['me'],
+    queryFn: () => fetchJson<Me>('/api/me'),
+  });
+}
+
+export function useCorretoresAdmin() {
+  return useQuery({
+    queryKey: ['admin-corretores'],
+    queryFn: () => fetchJson<{ data: Corretor[] }>('/api/admin/corretores'),
+  });
+}
+
+export function useCreateCorretor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NovoCorretorPayload) =>
+      fetchJson<NovoCorretorResultado>('/api/admin/corretores', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
   });
 }

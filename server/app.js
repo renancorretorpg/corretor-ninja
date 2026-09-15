@@ -12,6 +12,7 @@ const {
   N8N_COPIAR_IMAGENS_WEBHOOK_URL,
   N8N_CANCELAR_WEBHOOK_URL,
   N8N_ADICIONAR_IMAGEM_WEBHOOK_URL,
+  N8N_CRIAR_CLIENTE_WEBHOOK_URL,
   N8N_WEBHOOK_SECRET,
   PANEL_PUBLIC_URL,
 } = process.env;
@@ -73,7 +74,7 @@ async function requireAuth(req, res, next) {
   }
   const { data: perfil, error: perfilError } = await supabase
     .from('corretor_perfis')
-    .select('instance, drive_pasta_teasers')
+    .select('instance, drive_pasta_teasers, is_admin')
     .eq('user_id', userData.user.id)
     .maybeSingle();
   if (perfilError || !perfil) {
@@ -81,7 +82,16 @@ async function requireAuth(req, res, next) {
   }
   req.instance = perfil.instance;
   req.driveFolder = perfil.drive_pasta_teasers;
+  req.isAdmin = perfil.is_admin === true;
   req.user = userData.user;
+  next();
+}
+
+// Usar sempre depois de requireAuth (precisa de req.isAdmin ja resolvido).
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) {
+    return res.status(403).json({ error: 'Acesso restrito a administradores.' });
+  }
   next();
 }
 
@@ -983,6 +993,131 @@ app.delete('/api/campanhas/:id', requireAuth, async (req, res) => {
     if (error) throw error;
 
     res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+app.get('/api/me', requireAuth, (req, res) => {
+  res.json({ instance: req.instance, is_admin: req.isAdmin });
+});
+
+// Lista os corretores com acesso ao painel (so o e-mail de login e o
+// identificador -- os dados de CRM/WhatsApp ficam no n8n, nao aqui).
+app.get('/api/admin/corretores', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const { data: perfis, error } = await supabase
+      .from('corretor_perfis')
+      .select('user_id, instance, is_admin')
+      .order('instance');
+    if (error) throw error;
+
+    const corretores = await Promise.all(
+      (perfis || []).map(async (perfil) => {
+        const { data: userData } = await supabase.auth.admin.getUserById(perfil.user_id);
+        return {
+          instance: perfil.instance,
+          is_admin: perfil.is_admin === true,
+          email: userData?.user?.email || null,
+        };
+      }),
+    );
+    res.json({ data: corretores });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Cadastra um novo corretor: cria o login do painel (Supabase Auth), o
+// vinculo em corretor_perfis, e manda o login/senha do Praedium pro n8n
+// (que criptografa e salva na tabela `clientes` -- o painel nunca guarda
+// nem ve a chave de criptografia). WhatsApp/Drive/Calendar do corretor
+// ficam com valores vazios e precisam ser configurados a parte antes de
+// marcar o corretor como ativo.
+app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) => {
+  const instance = (req.body.instance || '').toString().trim();
+  const nomeCorretor = (req.body.nome_corretor || '').toString().trim();
+  const email = (req.body.email || '').toString().trim();
+  const senha = (req.body.senha || '').toString();
+  const whatsappNumero = (req.body.whatsapp_numero || '').toString().replace(/\D/g, '');
+  const crmLogin = (req.body.crm_login || '').toString().trim();
+  const crmSenha = (req.body.crm_senha || '').toString();
+
+  if (!instance || !nomeCorretor || !email || !senha || !whatsappNumero || !crmLogin || !crmSenha) {
+    return res.status(400).json({
+      error: 'Preencha identificador, nome, e-mail, senha, WhatsApp, login e senha do Praedium.',
+    });
+  }
+  if (senha.length < 6) {
+    return res.status(400).json({ error: 'A senha do painel precisa ter pelo menos 6 caracteres.' });
+  }
+
+  try {
+    const { data: existente } = await supabase
+      .from('corretor_perfis')
+      .select('instance')
+      .eq('instance', instance)
+      .maybeSingle();
+    if (existente) {
+      return res.status(409).json({ error: 'Já existe um corretor cadastrado com esse identificador.' });
+    }
+
+    const { data: novoUsuario, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password: senha,
+      email_confirm: true,
+    });
+    if (authError) {
+      return res.status(400).json({ error: authError.message });
+    }
+
+    const { error: perfilError } = await supabase
+      .from('corretor_perfis')
+      .insert({ user_id: novoUsuario.user.id, instance, is_admin: false });
+    if (perfilError) {
+      // Evita deixar uma conta de login orfa (sem corretor_perfis) se o
+      // vinculo falhar -- sem isso, o e-mail ficaria "usado" sem dar acesso
+      // a nada, e uma nova tentativa de cadastro falharia sem explicacao.
+      await supabase.auth.admin.deleteUser(novoUsuario.user.id).catch(() => {});
+      throw perfilError;
+    }
+
+    let n8nOk = false;
+    let n8nErro = null;
+    if (N8N_CRIAR_CLIENTE_WEBHOOK_URL) {
+      try {
+        const resp = await fetchComTimeoutERetry(N8N_CRIAR_CLIENTE_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+          body: JSON.stringify({
+            instance,
+            nome_corretor: nomeCorretor,
+            whatsapp_numero: whatsappNumero,
+            crm_login: crmLogin,
+            crm_senha: crmSenha,
+          }),
+        }, 10000);
+        n8nOk = resp.ok;
+        if (!resp.ok) {
+          const corpo = await resp.json().catch(() => ({}));
+          n8nErro = corpo.error || `n8n respondeu ${resp.status}`;
+        }
+      } catch (n8nErr) {
+        n8nErro = n8nErr.message;
+      }
+    } else {
+      n8nErro = 'N8N_CRIAR_CLIENTE_WEBHOOK_URL não configurado no painel.';
+    }
+
+    res.status(201).json({
+      ok: true,
+      instance,
+      painel: 'criado',
+      praedium: n8nOk ? 'criado' : 'falhou',
+      praedium_erro: n8nOk ? null : n8nErro,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
