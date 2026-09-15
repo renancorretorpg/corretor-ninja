@@ -4,6 +4,7 @@ import { EtapasPage } from './components/EtapasPage';
 import { CampanhasPage } from './components/CampanhasPage';
 import { LoginPage } from './components/LoginPage';
 import { AdminCorretoresPage } from './components/AdminCorretoresPage';
+import { ConvitePage } from './components/ConvitePage';
 import { useAuth } from './AuthContext';
 import { useMe } from './api';
 import { Button } from './components/ui';
@@ -11,6 +12,16 @@ import { Button } from './components/ui';
 const linkBase = 'flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors';
 
 export default function App() {
+  return (
+    <Routes>
+      {/* Publica -- o proprio corretor preenche, sem precisar de login */}
+      <Route path="/convite/:token" element={<ConvitePage />} />
+      <Route path="*" element={<PainelAutenticado />} />
+    </Routes>
+  );
+}
+
+function PainelAutenticado() {
   const { session, loading, signOut } = useAuth();
   const { data: me } = useMe();
 

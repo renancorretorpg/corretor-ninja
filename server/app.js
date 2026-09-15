@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -1030,94 +1031,272 @@ app.get('/api/admin/corretores', requireAuth, requireAdmin, async (_req, res) =>
   }
 });
 
-// Cadastra um novo corretor: cria o login do painel (Supabase Auth), o
-// vinculo em corretor_perfis, e manda o login/senha do Praedium pro n8n
-// (que criptografa e salva na tabela `clientes` -- o painel nunca guarda
-// nem ve a chave de criptografia). WhatsApp/Drive/Calendar do corretor
-// ficam com valores vazios e precisam ser configurados a parte antes de
-// marcar o corretor como ativo.
+function validarDadosCorretor(d) {
+  if (!d.instance || !d.nomeCorretor || !d.email || !d.senha || !d.whatsappNumero || !d.crmLogin || !d.crmSenha) {
+    return 'Preencha identificador, nome, e-mail, senha, WhatsApp, login e senha do Praedium.';
+  }
+  if (d.senha.length < 6) {
+    return 'A senha do painel precisa ter pelo menos 6 caracteres.';
+  }
+  return null;
+}
+
+// Usada tanto pelo cadastro direto quanto pela finalizacao de um convite:
+// cria o login do painel (Supabase Auth), o vinculo em corretor_perfis, e
+// manda o login/senha do Praedium pro n8n (que criptografa e salva na
+// tabela `clientes` -- o painel nunca guarda nem ve a chave de
+// criptografia). Evolution/Calendar do corretor ficam vazios e precisam
+// ser configurados a parte antes de marcar o corretor como ativo.
+async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, whatsappNumero, crmLogin, crmSenha, drivePastaTeasers }) {
+  const { data: existente } = await supabase
+    .from('corretor_perfis')
+    .select('instance')
+    .eq('instance', instance)
+    .maybeSingle();
+  if (existente) {
+    const erro = new Error('Já existe um corretor cadastrado com esse identificador.');
+    erro.status = 409;
+    throw erro;
+  }
+
+  const { data: novoUsuario, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    password: senha,
+    email_confirm: true,
+  });
+  if (authError) {
+    const erro = new Error(authError.message);
+    erro.status = 400;
+    throw erro;
+  }
+
+  const { error: perfilError } = await supabase
+    .from('corretor_perfis')
+    .insert({ user_id: novoUsuario.user.id, instance, is_admin: false, drive_pasta_teasers: drivePastaTeasers || null });
+  if (perfilError) {
+    // Evita deixar uma conta de login orfa (sem corretor_perfis) se o
+    // vinculo falhar -- sem isso, o e-mail ficaria "usado" sem dar acesso
+    // a nada, e uma nova tentativa de cadastro falharia sem explicacao.
+    await supabase.auth.admin.deleteUser(novoUsuario.user.id).catch(() => {});
+    throw perfilError;
+  }
+
+  let n8nOk = false;
+  let n8nErro = null;
+  if (N8N_CRIAR_CLIENTE_WEBHOOK_URL) {
+    try {
+      const resp = await fetchComTimeoutERetry(N8N_CRIAR_CLIENTE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+        body: JSON.stringify({
+          instance,
+          nome_corretor: nomeCorretor,
+          whatsapp_numero: whatsappNumero,
+          crm_login: crmLogin,
+          crm_senha: crmSenha,
+          drive_pasta_teasers: drivePastaTeasers || '',
+        }),
+      }, 10000);
+      n8nOk = resp.ok;
+      if (!resp.ok) {
+        const corpo = await resp.json().catch(() => ({}));
+        n8nErro = corpo.error || `n8n respondeu ${resp.status}`;
+      }
+    } catch (n8nErr) {
+      n8nErro = n8nErr.message;
+    }
+  } else {
+    n8nErro = 'N8N_CRIAR_CLIENTE_WEBHOOK_URL não configurado no painel.';
+  }
+
+  return { instance, praedium: n8nOk ? 'criado' : 'falhou', praedium_erro: n8nOk ? null : n8nErro };
+}
+
 app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) => {
+  const dados = {
+    instance: (req.body.instance || '').toString().trim(),
+    nomeCorretor: (req.body.nome_corretor || '').toString().trim(),
+    email: (req.body.email || '').toString().trim(),
+    senha: (req.body.senha || '').toString(),
+    whatsappNumero: (req.body.whatsapp_numero || '').toString().replace(/\D/g, ''),
+    crmLogin: (req.body.crm_login || '').toString().trim(),
+    crmSenha: (req.body.crm_senha || '').toString(),
+    drivePastaTeasers: (req.body.drive_pasta_teasers || '').toString().trim(),
+  };
+
+  const erroValidacao = validarDadosCorretor(dados);
+  if (erroValidacao) {
+    return res.status(400).json({ error: erroValidacao });
+  }
+
+  try {
+    const resultado = await criarCorretorCompleto(dados);
+    res.status(201).json({ ok: true, painel: 'criado', ...resultado });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// --- Convites: link publico que o proprio corretor preenche (sem instance
+// -- isso o admin define na hora de finalizar), pra nao precisar do admin
+// digitar os dados de outra pessoa manualmente.
+
+function gerarTokenConvite() {
+  return crypto.randomBytes(20).toString('hex');
+}
+
+app.post('/api/admin/convites', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const token = gerarTokenConvite();
+    const { error } = await supabase.from('convites_corretor').insert({ token, status: 'pendente' });
+    if (error) throw error;
+    const base = PANEL_PUBLIC_URL || '';
+    res.status(201).json({ token, url: `${base}/convite/${token}` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Lista sem os campos sensiveis (senha/crm_senha nunca voltam pro
+// navegador do admin -- a finalizacao usa esses dados so no backend).
+app.get('/api/admin/convites', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('convites_corretor')
+      .select('id, token, status, nome_corretor, whatsapp_numero, email, crm_login, drive_pasta_teasers, criado_em, preenchido_em')
+      .neq('status', 'finalizado')
+      .order('criado_em', { ascending: false });
+    if (error) throw error;
+    const base = PANEL_PUBLIC_URL || '';
+    res.json({ data: (data || []).map((c) => ({ ...c, url: `${base}/convite/${c.token}` })) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+app.delete('/api/admin/convites/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase.from('convites_corretor').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Finaliza um convite ja preenchido: o admin so informa o identificador
+// (instance) -- o resto dos dados ja foi preenchido pelo proprio corretor.
+app.post('/api/admin/convites/:id/finalizar', requireAuth, requireAdmin, async (req, res) => {
   const instance = (req.body.instance || '').toString().trim();
+  if (!instance) {
+    return res.status(400).json({ error: 'Informe o identificador (instance) desse corretor.' });
+  }
+
+  try {
+    const { data: convite, error: buscaError } = await supabase
+      .from('convites_corretor')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (buscaError) throw buscaError;
+    if (!convite || convite.status !== 'preenchido') {
+      return res.status(404).json({ error: 'Convite não encontrado ou ainda não preenchido pelo corretor.' });
+    }
+
+    const resultado = await criarCorretorCompleto({
+      instance,
+      nomeCorretor: convite.nome_corretor,
+      email: convite.email,
+      senha: convite.senha,
+      whatsappNumero: convite.whatsapp_numero,
+      crmLogin: convite.crm_login,
+      crmSenha: convite.crm_senha,
+      drivePastaTeasers: convite.drive_pasta_teasers,
+    });
+
+    // Apaga o convite (e a senha em texto puro que ele guardava) assim que
+    // a conta de verdade existe -- nao ha mais motivo pra manter isso salvo.
+    await supabase.from('convites_corretor').delete().eq('id', req.params.id);
+
+    res.status(201).json({ ok: true, painel: 'criado', ...resultado });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// GET publico (sem auth): so confirma se o link ainda e valido, pra
+// decidir se mostra o formulario ou uma mensagem de erro.
+app.get('/api/convites/:token', async (req, res) => {
+  try {
+    const { data: convite } = await supabase
+      .from('convites_corretor')
+      .select('status')
+      .eq('token', req.params.token)
+      .maybeSingle();
+    if (!convite || convite.status !== 'pendente') {
+      return res.status(404).json({ error: 'Convite inválido, expirado ou já utilizado.' });
+    }
+    res.json({ valido: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// POST publico (sem auth, protegido pelo token unico do link): o proprio
+// corretor preenche os dados dele. So grava -- a criacao de verdade
+// acontece quando o admin finaliza, ja com o identificador definido.
+app.post('/api/convites/:token', async (req, res) => {
   const nomeCorretor = (req.body.nome_corretor || '').toString().trim();
+  const whatsappNumero = (req.body.whatsapp_numero || '').toString().replace(/\D/g, '');
   const email = (req.body.email || '').toString().trim();
   const senha = (req.body.senha || '').toString();
-  const whatsappNumero = (req.body.whatsapp_numero || '').toString().replace(/\D/g, '');
   const crmLogin = (req.body.crm_login || '').toString().trim();
   const crmSenha = (req.body.crm_senha || '').toString();
+  const drivePastaTeasers = (req.body.drive_pasta_teasers || '').toString().trim();
 
-  if (!instance || !nomeCorretor || !email || !senha || !whatsappNumero || !crmLogin || !crmSenha) {
-    return res.status(400).json({
-      error: 'Preencha identificador, nome, e-mail, senha, WhatsApp, login e senha do Praedium.',
-    });
+  if (!nomeCorretor || !whatsappNumero || !email || !senha || !crmLogin || !crmSenha) {
+    return res.status(400).json({ error: 'Preencha nome, WhatsApp, e-mail, senha, login e senha do Praedium.' });
   }
   if (senha.length < 6) {
     return res.status(400).json({ error: 'A senha do painel precisa ter pelo menos 6 caracteres.' });
   }
 
   try {
-    const { data: existente } = await supabase
-      .from('corretor_perfis')
-      .select('instance')
-      .eq('instance', instance)
+    const { data: convite, error: buscaError } = await supabase
+      .from('convites_corretor')
+      .select('id, status')
+      .eq('token', req.params.token)
       .maybeSingle();
-    if (existente) {
-      return res.status(409).json({ error: 'Já existe um corretor cadastrado com esse identificador.' });
+    if (buscaError) throw buscaError;
+    if (!convite || convite.status !== 'pendente') {
+      return res.status(404).json({ error: 'Convite inválido, expirado ou já utilizado.' });
     }
 
-    const { data: novoUsuario, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password: senha,
-      email_confirm: true,
-    });
-    if (authError) {
-      return res.status(400).json({ error: authError.message });
-    }
+    const { error } = await supabase
+      .from('convites_corretor')
+      .update({
+        nome_corretor: nomeCorretor,
+        whatsapp_numero: whatsappNumero,
+        email,
+        senha,
+        crm_login: crmLogin,
+        crm_senha: crmSenha,
+        drive_pasta_teasers: drivePastaTeasers || null,
+        status: 'preenchido',
+        preenchido_em: new Date().toISOString(),
+      })
+      .eq('id', convite.id);
+    if (error) throw error;
 
-    const { error: perfilError } = await supabase
-      .from('corretor_perfis')
-      .insert({ user_id: novoUsuario.user.id, instance, is_admin: false });
-    if (perfilError) {
-      // Evita deixar uma conta de login orfa (sem corretor_perfis) se o
-      // vinculo falhar -- sem isso, o e-mail ficaria "usado" sem dar acesso
-      // a nada, e uma nova tentativa de cadastro falharia sem explicacao.
-      await supabase.auth.admin.deleteUser(novoUsuario.user.id).catch(() => {});
-      throw perfilError;
-    }
-
-    let n8nOk = false;
-    let n8nErro = null;
-    if (N8N_CRIAR_CLIENTE_WEBHOOK_URL) {
-      try {
-        const resp = await fetchComTimeoutERetry(N8N_CRIAR_CLIENTE_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
-          body: JSON.stringify({
-            instance,
-            nome_corretor: nomeCorretor,
-            whatsapp_numero: whatsappNumero,
-            crm_login: crmLogin,
-            crm_senha: crmSenha,
-          }),
-        }, 10000);
-        n8nOk = resp.ok;
-        if (!resp.ok) {
-          const corpo = await resp.json().catch(() => ({}));
-          n8nErro = corpo.error || `n8n respondeu ${resp.status}`;
-        }
-      } catch (n8nErr) {
-        n8nErro = n8nErr.message;
-      }
-    } else {
-      n8nErro = 'N8N_CRIAR_CLIENTE_WEBHOOK_URL não configurado no painel.';
-    }
-
-    res.status(201).json({
-      ok: true,
-      instance,
-      painel: 'criado',
-      praedium: n8nOk ? 'criado' : 'falhou',
-      praedium_erro: n8nOk ? null : n8nErro,
-    });
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });

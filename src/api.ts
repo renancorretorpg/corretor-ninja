@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabaseClient';
 import type {
   Campanha,
+  Convite,
   Corretor,
   DestinatariosModo,
   Etapa,
@@ -13,6 +14,7 @@ import type {
   NovaCampanhaPayload,
   NovoCorretorPayload,
   NovoCorretorResultado,
+  PreencherConvitePayload,
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -275,5 +277,64 @@ export function useCreateCorretor() {
         body: JSON.stringify(payload),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
+export function useConvitesAdmin() {
+  return useQuery({
+    queryKey: ['admin-convites'],
+    queryFn: () => fetchJson<{ data: Convite[] }>('/api/admin/convites'),
+  });
+}
+
+export function useCreateConvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchJson<{ token: string; url: string }>('/api/admin/convites', { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-convites'] }),
+  });
+}
+
+export function useDeleteConvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => fetchJson<{ ok: true }>(`/api/admin/convites/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-convites'] }),
+  });
+}
+
+export function useFinalizarConvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, instance }: { id: number; instance: string }) =>
+      fetchJson<NovoCorretorResultado>(`/api/admin/convites/${id}/finalizar`, {
+        method: 'POST',
+        body: JSON.stringify({ instance }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-convites'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-corretores'] });
+    },
+  });
+}
+
+// Rota publica (sem sessao) usada na pagina de convite -- fetchJson so
+// anexa o Bearer token se houver uma sessao ativa, entao funciona normal
+// pra um visitante sem login.
+export function useConviteValido(token: string) {
+  return useQuery({
+    queryKey: ['convite', token],
+    queryFn: () => fetchJson<{ valido: true }>(`/api/convites/${token}`),
+    retry: false,
+  });
+}
+
+export function usePreencherConvite(token: string) {
+  return useMutation({
+    mutationFn: (payload: PreencherConvitePayload) =>
+      fetchJson<{ ok: true }>(`/api/convites/${token}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   });
 }

@@ -107,6 +107,7 @@ export interface NovoCorretorPayload {
   whatsapp_numero: string;
   crm_login: string;
   crm_senha: string;
+  drive_pasta_teasers?: string;
 }
 
 export interface NovoCorretorResultado {
@@ -115,4 +116,30 @@ export interface NovoCorretorResultado {
   painel: 'criado';
   praedium: 'criado' | 'falhou';
   praedium_erro: string | null;
+}
+
+export type ConviteStatus = 'pendente' | 'preenchido' | 'finalizado';
+
+export interface Convite {
+  id: number;
+  token: string;
+  url: string;
+  status: ConviteStatus;
+  nome_corretor: string | null;
+  whatsapp_numero: string | null;
+  email: string | null;
+  crm_login: string | null;
+  drive_pasta_teasers: string | null;
+  criado_em: string;
+  preenchido_em: string | null;
+}
+
+export interface PreencherConvitePayload {
+  nome_corretor: string;
+  whatsapp_numero: string;
+  email: string;
+  senha: string;
+  crm_login: string;
+  crm_senha: string;
+  drive_pasta_teasers?: string;
 }
