@@ -282,6 +282,15 @@ export function useUpdateCorretor() {
   });
 }
 
+export function useDeleteCorretor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (instance: string) =>
+      fetchJson<{ ok: true }>(`/api/admin/corretores/${encodeURIComponent(instance)}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
 export function useGerarQrCodeCorretor() {
   return useMutation({
     mutationFn: (instance: string) =>

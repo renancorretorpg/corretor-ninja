@@ -5,6 +5,7 @@ import {
   useCreateConvite,
   useCreateCorretor,
   useDeleteConvite,
+  useDeleteCorretor,
   useFinalizarConvite,
   useGerarQrCodeCorretor,
   useUpdateCorretor,
@@ -378,10 +379,13 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
 function EditCorretorModal({ corretor, onClose }: { corretor: Corretor; onClose: () => void }) {
   const atualizar = useUpdateCorretor();
   const gerarQr = useGerarQrCodeCorretor();
+  const excluir = useDeleteCorretor();
   const [drivePastaTeasers, setDrivePastaTeasers] = useState(corretor.drive_pasta_teasers || '');
   const [isAdmin, setIsAdmin] = useState(corretor.is_admin);
   const [erro, setErro] = useState('');
   const [salvo, setSalvo] = useState(false);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [textoConfirmacao, setTextoConfirmacao] = useState('');
 
   function salvar() {
     setErro('');
@@ -393,6 +397,10 @@ function EditCorretorModal({ corretor, onClose }: { corretor: Corretor; onClose:
         onError: (err) => setErro((err as Error).message),
       },
     );
+  }
+
+  function confirmarExclusao() {
+    excluir.mutate(corretor.instance, { onSuccess: onClose });
   }
 
   return (
@@ -442,6 +450,47 @@ function EditCorretorModal({ corretor, onClose }: { corretor: Corretor; onClose:
               <p className="mt-1 text-xs text-muted-foreground">
                 Abrir WhatsApp → Aparelhos conectados → Conectar um aparelho, e escanear essa imagem.
               </p>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-600">Zona de perigo</p>
+          {!confirmandoExclusao ? (
+            <Button
+              variant="outline"
+              className="border-red-200 text-red-600 hover:bg-red-50"
+              onClick={() => setConfirmandoExclusao(true)}
+            >
+              Excluir corretor
+            </Button>
+          ) : (
+            <div className="space-y-2 rounded-md border border-red-200 bg-red-50 p-3">
+              <p className="text-sm text-red-700">
+                Isso remove o acesso de <strong>{corretor.instance}</strong> ao painel (login e senha deixam de
+                funcionar). Os leads, campanhas e a instância do WhatsApp continuam intactos. Pra confirmar, digite{' '}
+                <strong>{corretor.instance}</strong> abaixo:
+              </p>
+              <Input value={textoConfirmacao} onChange={(e) => setTextoConfirmacao(e.target.value)} placeholder={corretor.instance} />
+              {excluir.isError && <p className="text-sm text-red-600">{(excluir.error as Error).message}</p>}
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setConfirmandoExclusao(false);
+                    setTextoConfirmacao('');
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="bg-red-600 text-white hover:opacity-90"
+                  disabled={textoConfirmacao !== corretor.instance || excluir.isPending}
+                  onClick={confirmarExclusao}
+                >
+                  {excluir.isPending ? 'Excluindo...' : 'Confirmar exclusão'}
+                </Button>
+              </div>
             </div>
           )}
         </div>

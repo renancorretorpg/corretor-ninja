@@ -1064,6 +1064,37 @@ app.patch('/api/admin/corretores/:instance', requireAuth, requireAdmin, async (r
   }
 });
 
+// Revoga o acesso do corretor ao painel (login + vinculo em
+// corretor_perfis). Nao mexe nos dados de negocio dele (leads, etapas,
+// campanhas, nem a linha na tabela `clientes` do n8n com a instancia da
+// Evolution) -- so tira o acesso, pra nao apagar historico por engano.
+app.delete('/api/admin/corretores/:instance', requireAuth, requireAdmin, async (req, res) => {
+  if (req.params.instance === req.instance) {
+    return res.status(400).json({ error: 'Você não pode excluir seu próprio acesso.' });
+  }
+  try {
+    const { data: perfil, error: buscaError } = await supabase
+      .from('corretor_perfis')
+      .select('user_id')
+      .eq('instance', req.params.instance)
+      .maybeSingle();
+    if (buscaError) throw buscaError;
+    if (!perfil) return res.status(404).json({ error: 'Corretor não encontrado.' });
+
+    const { error: deleteError } = await supabase.from('corretor_perfis').delete().eq('instance', req.params.instance);
+    if (deleteError) throw deleteError;
+
+    await supabase.auth.admin.deleteUser(perfil.user_id).catch((err) => {
+      console.error('Falha ao excluir usuário do Auth (perfil já removido):', err);
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
 // Gera um QR code novo pra reconectar o WhatsApp de um corretor que ja tem
 // instancia criada na Evolution -- usa a mesma chave global, so que no
 // endpoint de connect (nao cria instancia de novo).
