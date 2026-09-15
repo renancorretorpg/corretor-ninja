@@ -27,6 +27,20 @@ export function formatDataHora(iso: string): string {
   });
 }
 
+const FORMATADOR_DIA_SP = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+// Compara duas datas ISO pelo dia no fuso de Sao Paulo -- usado pra saber se
+// uma campanha ja foi criada "hoje" (mesma regra do limite de 1/dia no
+// backend, que usa o mesmo formatador pra ficar consistente).
+export function mesmoDiaSaoPaulo(isoA: string, isoB: string): boolean {
+  return FORMATADOR_DIA_SP.format(new Date(isoA)) === FORMATADOR_DIA_SP.format(new Date(isoB));
+}
+
 export function statusTone(status: string): 'default' | 'success' | 'warning' | 'muted' {
   const s = status.toLowerCase();
   if (s === 'novo') return 'default';
