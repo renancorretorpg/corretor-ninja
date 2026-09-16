@@ -1347,6 +1347,77 @@ app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
+// Vincula acesso ao painel pra um corretor que ja existe no n8n (instancia
+// da Evolution e login do Praedium ja cadastrados na tabela `clientes`) --
+// so cria o login do painel (Supabase Auth) + o vinculo em corretor_perfis.
+// Diferente de criarCorretorCompleto: nao cria instancia nova na Evolution
+// nem chama o webhook de criacao no n8n, pra nao duplicar/sobrescrever o
+// que o corretor ja tem la.
+async function vincularAcessoPainel({ instance, email, senha, isAdmin, drivePastaTeasers }) {
+  const { data: existente } = await supabase
+    .from('corretor_perfis')
+    .select('instance')
+    .eq('instance', instance)
+    .maybeSingle();
+  if (existente) {
+    const erro = new Error('Esse identificador já tem acesso ao painel.');
+    erro.status = 409;
+    throw erro;
+  }
+
+  const { data: novoUsuario, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    password: senha,
+    email_confirm: true,
+  });
+  if (authError) {
+    const erro = new Error(authError.message);
+    erro.status = 400;
+    throw erro;
+  }
+
+  const { error: perfilError } = await supabase
+    .from('corretor_perfis')
+    .insert({
+      user_id: novoUsuario.user.id,
+      instance,
+      is_admin: isAdmin === true,
+      drive_pasta_teasers: drivePastaTeasers || null,
+    });
+  if (perfilError) {
+    // Mesma precaucao do cadastro completo: evita deixar uma conta de login
+    // orfa se o vinculo falhar.
+    await supabase.auth.admin.deleteUser(novoUsuario.user.id).catch(() => {});
+    throw perfilError;
+  }
+
+  return { instance };
+}
+
+app.post('/api/admin/corretores/vincular', requireAuth, requireAdmin, async (req, res) => {
+  const instance = (req.body.instance || '').toString().trim();
+  const email = (req.body.email || '').toString().trim();
+  const senha = (req.body.senha || '').toString();
+  const isAdmin = req.body.is_admin === true;
+  const drivePastaTeasers = (req.body.drive_pasta_teasers || '').toString().trim();
+
+  if (!instance || !email || !senha) {
+    return res.status(400).json({ error: 'Preencha identificador, e-mail e senha.' });
+  }
+  if (senha.length < 6) {
+    return res.status(400).json({ error: 'A senha do painel precisa ter pelo menos 6 caracteres.' });
+  }
+
+  try {
+    const resultado = await vincularAcessoPainel({ instance, email, senha, isAdmin, drivePastaTeasers });
+    res.status(201).json({ ok: true, ...resultado });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
 // --- Convites: link publico que o proprio corretor preenche (sem instance
 // -- isso o admin define na hora de finalizar), pra nao precisar do admin
 // digitar os dados de outra pessoa manualmente.

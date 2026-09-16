@@ -17,6 +17,7 @@ import type {
   NovoCorretorResultado,
   NovoLeadPayload,
   PreencherConvitePayload,
+  VincularAcessoPayload,
   QrCodeResultado,
 } from './types';
 
@@ -323,6 +324,18 @@ export function useCreateCorretor() {
   return useMutation({
     mutationFn: (payload: NovoCorretorPayload) =>
       fetchJson<NovoCorretorResultado>('/api/admin/corretores', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
+export function useVincularAcesso() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: VincularAcessoPayload) =>
+      fetchJson<{ ok: true; instance: string }>('/api/admin/corretores/vincular', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),

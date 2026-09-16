@@ -141,6 +141,14 @@ export interface NovoCorretorResultado {
   qrcode_base64: string | null;
 }
 
+export interface VincularAcessoPayload {
+  instance: string;
+  email: string;
+  senha: string;
+  is_admin?: boolean;
+  drive_pasta_teasers?: string;
+}
+
 export type ConviteStatus = 'pendente' | 'preenchido' | 'finalizado';
 
 export interface Convite {
