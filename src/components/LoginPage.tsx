@@ -30,7 +30,9 @@ export function LoginPage() {
       setErro('Digite seu e-mail acima primeiro.');
       return;
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(alvo);
+    const { error } = await supabase.auth.resetPasswordForEmail(alvo, {
+      redirectTo: `${window.location.origin}/redefinir-senha`,
+    });
     if (error) {
       setErro(error.message);
       return;

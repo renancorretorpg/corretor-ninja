@@ -5,6 +5,7 @@ import { CampanhasPage } from './components/CampanhasPage';
 import { LoginPage } from './components/LoginPage';
 import { AdminCorretoresPage } from './components/AdminCorretoresPage';
 import { ConvitePage } from './components/ConvitePage';
+import { RedefinirSenhaPage } from './components/RedefinirSenhaPage';
 import { useAuth } from './AuthContext';
 import { useMe } from './api';
 import { Button } from './components/ui';
@@ -16,6 +17,8 @@ export default function App() {
     <Routes>
       {/* Publica -- o proprio corretor preenche, sem precisar de login */}
       <Route path="/convite/:token" element={<ConvitePage />} />
+      {/* Publica -- acessada pelo link do e-mail de "esqueci minha senha" */}
+      <Route path="/redefinir-senha" element={<RedefinirSenhaPage />} />
       <Route path="*" element={<PainelAutenticado />} />
     </Routes>
   );
