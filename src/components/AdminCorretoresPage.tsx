@@ -10,6 +10,7 @@ import {
   useGerarQrCodeCorretor,
   useUpdateCorretor,
   useVerificarClienteExistente,
+  useVincularAcesso,
 } from '../api';
 import type { Corretor, Convite, NovoCorretorResultado } from '../types';
 import { Badge, Button, Card, Input, Modal } from './ui';
@@ -232,6 +233,143 @@ function ConvitesSection({ onResultado }: { onResultado: (r: ResultadoCriacao) =
       ) : (
         <p className="mt-3 text-sm text-muted-foreground">Nenhum convite pendente.</p>
       )}
+    </div>
+  );
+}
+
+function estadoInicialVinculo() {
+  return {
+    instance: '',
+    email: '',
+    senha: '',
+    confirmarSenha: '',
+    isAdmin: false,
+    drivePastaTeasers: '',
+  };
+}
+
+// Pra corretor que ja existe no n8n (ja tem instancia da Evolution + login
+// do Praedium cadastrados) e so precisa do login do painel. Diferente da
+// secao "Cadastrar diretamente", nao cria instancia nova no WhatsApp nem
+// manda nada pro n8n -- evita duplicar/sobrescrever o que ja esta la.
+function VincularAcessoSection() {
+  const vincular = useVincularAcesso();
+  const [form, setForm] = useState(estadoInicialVinculo());
+  const [erro, setErro] = useState('');
+  const [sucesso, setSucesso] = useState('');
+
+  function validar(): string | null {
+    if (!form.instance.trim()) return 'Preencha o identificador (instance) já usado no n8n.';
+    if (!form.email.trim()) return 'Preencha o e-mail de acesso ao painel.';
+    if (form.senha.length < 6) return 'A senha do painel precisa ter pelo menos 6 caracteres.';
+    if (form.senha !== form.confirmarSenha) return 'As senhas não conferem.';
+    return null;
+  }
+
+  function enviar() {
+    const erroValidacao = validar();
+    if (erroValidacao) {
+      setErro(erroValidacao);
+      setSucesso('');
+      return;
+    }
+    setErro('');
+    vincular.mutate(
+      {
+        instance: form.instance.trim(),
+        email: form.email.trim(),
+        senha: form.senha,
+        is_admin: form.isAdmin,
+        drive_pasta_teasers: form.drivePastaTeasers.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          setSucesso(`✅ Acesso ao painel criado para "${form.instance.trim()}".`);
+          setForm(estadoInicialVinculo());
+        },
+        onError: (err) => setErro((err as Error).message),
+      },
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold">Vincular corretor já cadastrado no n8n</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Pra quando o corretor já tem instância do WhatsApp e login do Praedium configurados no n8n, e só falta o
+        login do painel. Não cria nada novo na Evolution nem no n8n.
+      </p>
+
+      <Card className="mt-3 max-w-2xl p-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Identificador (instance)</label>
+              <Input
+                value={form.instance}
+                onChange={(e) => setForm((f) => ({ ...f, instance: e.target.value }))}
+                placeholder="mesmo valor usado na tabela clientes do n8n"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">E-mail de login</label>
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                placeholder="corretor@email.com"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Senha</label>
+              <Input
+                type="password"
+                value={form.senha}
+                onChange={(e) => setForm((f) => ({ ...f, senha: e.target.value }))}
+                placeholder="mínimo 6 caracteres"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Confirmar senha</label>
+              <Input
+                type="password"
+                value={form.confirmarSenha}
+                onChange={(e) => setForm((f) => ({ ...f, confirmarSenha: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">
+              ID da pasta de teasers no Google Drive (opcional)
+            </label>
+            <Input
+              value={form.drivePastaTeasers}
+              onChange={(e) => setForm((f) => ({ ...f, drivePastaTeasers: e.target.value }))}
+              className="w-full sm:max-w-xs"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.isAdmin}
+              onChange={(e) => setForm((f) => ({ ...f, isAdmin: e.target.checked }))}
+              className="h-4 w-4"
+            />
+            Administrador do painel
+          </label>
+
+          {erro && <p className="text-sm text-red-600">{erro}</p>}
+          {sucesso && <p className="text-sm text-emerald-700">{sucesso}</p>}
+
+          <div className="flex justify-end">
+            <Button onClick={enviar} disabled={vincular.isPending}>
+              {vincular.isPending ? 'Vinculando...' : 'Vincular acesso'}
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -578,6 +716,7 @@ export function AdminCorretoresPage() {
   return (
     <div className="space-y-8">
       <ConvitesSection onResultado={setResultadoModal} />
+      <VincularAcessoSection />
       <CadastroDiretoSection onResultado={setResultadoModal} />
 
       <div>

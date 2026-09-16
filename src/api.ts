@@ -15,7 +15,9 @@ import type {
   NovaCampanhaPayload,
   NovoCorretorPayload,
   NovoCorretorResultado,
+  NovoLeadPayload,
   PreencherConvitePayload,
+  VincularAcessoPayload,
   QrCodeResultado,
   VerificarClienteResultado,
 } from './types';
@@ -88,6 +90,23 @@ export function useOrigens() {
   return useQuery({
     queryKey: ['origens'],
     queryFn: () => fetchJson<{ origens: string[] }>('/api/leads/origens'),
+  });
+}
+
+export function useCreateLead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NovoLeadPayload) =>
+      fetchJson<{ data: Lead }>('/api/leads', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leads-kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['statuses'] });
+      queryClient.invalidateQueries({ queryKey: ['origens'] });
+    },
   });
 }
 
@@ -315,6 +334,18 @@ export function useCreateCorretor() {
   return useMutation({
     mutationFn: (payload: NovoCorretorPayload) =>
       fetchJson<NovoCorretorResultado>('/api/admin/corretores', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-corretores'] }),
+  });
+}
+
+export function useVincularAcesso() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: VincularAcessoPayload) =>
+      fetchJson<{ ok: true; instance: string }>('/api/admin/corretores/vincular', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),

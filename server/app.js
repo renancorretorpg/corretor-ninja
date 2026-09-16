@@ -184,13 +184,20 @@ app.get('/api/leads/origens', requireAuth, async (req, res) => {
 app.patch('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const allowedFields = ['status', 'notas', 'nome', 'sobrenome', 'origem'];
+    const allowedFields = ['status', 'notas', 'nome', 'sobrenome', 'origem', 'numero'];
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar.' });
+    }
+
+    if (updates.numero !== undefined) {
+      updates.numero = String(updates.numero).replace(/\D/g, '');
+      if (!updates.numero) {
+        return res.status(400).json({ error: 'Telefone inválido.' });
+      }
     }
 
     // So valida contra a lista de etapas se ela ja existir -- numa conta nova
@@ -248,6 +255,81 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Lead não encontrado.' });
     }
     res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// POST /api/leads — cadastro manual pelo corretor (leads que normalmente
+// chegam via WhatsApp/n8n, mas que ele quer adicionar direto no painel).
+app.post('/api/leads', requireAuth, async (req, res) => {
+  try {
+    const nome = (req.body.nome || '').toString().trim();
+    const sobrenome = (req.body.sobrenome || '').toString().trim();
+    const numero = (req.body.numero || '').toString().replace(/\D/g, '');
+    const origem = (req.body.origem || '').toString().trim();
+    const notas = (req.body.notas || '').toString().trim();
+    let status = (req.body.status || '').toString().trim();
+
+    if (!nome) {
+      return res.status(400).json({ error: 'Nome é obrigatório.' });
+    }
+    if (!numero) {
+      return res.status(400).json({ error: 'Telefone é obrigatório.' });
+    }
+
+    // Mesma regra do PATCH: so exige bater com uma etapa cadastrada se a
+    // instance ja tiver etapas (conta nova pode nao ter nenhuma ainda).
+    const { count: etapasCount, error: etapasError } = await supabase
+      .from('etapas')
+      .select('*', { count: 'exact', head: true })
+      .eq('instance', req.instance);
+    if (etapasError) throw etapasError;
+    if ((etapasCount ?? 0) > 0) {
+      if (!status) {
+        return res.status(400).json({ error: 'Selecione a etapa do lead.' });
+      }
+      const { data: etapaExistente, error: checkError } = await supabase
+        .from('etapas')
+        .select('id')
+        .eq('instance', req.instance)
+        .eq('nome', status)
+        .maybeSingle();
+      if (checkError) throw checkError;
+      if (!etapaExistente) {
+        return res.status(400).json({ error: `Etapa "${status}" não existe.` });
+      }
+    } else if (!status) {
+      status = 'novo';
+    }
+
+    const { data: existente } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('instance', req.instance)
+      .eq('numero', numero)
+      .maybeSingle();
+    if (existente) {
+      return res.status(409).json({ error: 'Já existe um lead cadastrado com esse telefone.' });
+    }
+
+    const { data, error } = await supabase
+      .from('leads')
+      .insert({
+        instance: req.instance,
+        nome,
+        sobrenome: sobrenome || null,
+        numero,
+        status,
+        origem: origem || null,
+        notas: notas || null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ data });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
@@ -1340,6 +1422,77 @@ app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) =>
   try {
     const resultado = await criarCorretorCompleto(dados);
     res.status(201).json({ ok: true, painel: 'criado', ...resultado });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
+  }
+});
+
+// Vincula acesso ao painel pra um corretor que ja existe no n8n (instancia
+// da Evolution e login do Praedium ja cadastrados na tabela `clientes`) --
+// so cria o login do painel (Supabase Auth) + o vinculo em corretor_perfis.
+// Diferente de criarCorretorCompleto: nao cria instancia nova na Evolution
+// nem chama o webhook de criacao no n8n, pra nao duplicar/sobrescrever o
+// que o corretor ja tem la.
+async function vincularAcessoPainel({ instance, email, senha, isAdmin, drivePastaTeasers }) {
+  const { data: existente } = await supabase
+    .from('corretor_perfis')
+    .select('instance')
+    .eq('instance', instance)
+    .maybeSingle();
+  if (existente) {
+    const erro = new Error('Esse identificador já tem acesso ao painel.');
+    erro.status = 409;
+    throw erro;
+  }
+
+  const { data: novoUsuario, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    password: senha,
+    email_confirm: true,
+  });
+  if (authError) {
+    const erro = new Error(authError.message);
+    erro.status = 400;
+    throw erro;
+  }
+
+  const { error: perfilError } = await supabase
+    .from('corretor_perfis')
+    .insert({
+      user_id: novoUsuario.user.id,
+      instance,
+      is_admin: isAdmin === true,
+      drive_pasta_teasers: drivePastaTeasers || null,
+    });
+  if (perfilError) {
+    // Mesma precaucao do cadastro completo: evita deixar uma conta de login
+    // orfa se o vinculo falhar.
+    await supabase.auth.admin.deleteUser(novoUsuario.user.id).catch(() => {});
+    throw perfilError;
+  }
+
+  return { instance };
+}
+
+app.post('/api/admin/corretores/vincular', requireAuth, requireAdmin, async (req, res) => {
+  const instance = (req.body.instance || '').toString().trim();
+  const email = (req.body.email || '').toString().trim();
+  const senha = (req.body.senha || '').toString();
+  const isAdmin = req.body.is_admin === true;
+  const drivePastaTeasers = (req.body.drive_pasta_teasers || '').toString().trim();
+
+  if (!instance || !email || !senha) {
+    return res.status(400).json({ error: 'Preencha identificador, e-mail e senha.' });
+  }
+  if (senha.length < 6) {
+    return res.status(400).json({ error: 'A senha do painel precisa ter pelo menos 6 caracteres.' });
+  }
+
+  try {
+    const resultado = await vincularAcessoPainel({ instance, email, senha, isAdmin, drivePastaTeasers });
+    res.status(201).json({ ok: true, ...resultado });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
