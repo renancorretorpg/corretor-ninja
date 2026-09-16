@@ -11,6 +11,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
 
   const [nome, setNome] = useState('');
   const [sobrenome, setSobrenome] = useState('');
+  const [numero, setNumero] = useState('');
   const [status, setStatus] = useState('');
   const [origem, setOrigem] = useState('');
   const [notas, setNotas] = useState('');
@@ -21,6 +22,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
     if (lead) {
       setNome(lead.nome ?? '');
       setSobrenome(lead.sobrenome ?? '');
+      setNumero(lead.numero ?? '');
       setStatus(lead.status ?? '');
       setOrigem(lead.origem ?? '');
       setNotas(lead.notas ?? '');
@@ -37,7 +39,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
     if (!lead) return;
     await updateLead.mutateAsync({
       id: lead.id,
-      updates: { nome, sobrenome, status, origem, notas },
+      updates: { nome, sobrenome, numero, status, origem, notas },
     });
     onClose();
   }
@@ -94,6 +96,11 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Sobrenome</label>
             <Input value={sobrenome} onChange={(e) => setSobrenome(e.target.value)} />
           </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Telefone</label>
+          <Input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="5511999999999" />
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
