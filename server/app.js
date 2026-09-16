@@ -505,9 +505,10 @@ app.delete('/api/etapas/:id', requireAuth, async (req, res) => {
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
 const INTERVALO_MIN_ENTRE_CAMPANHAS_MS = 5 * 60 * 1000;
+const MAX_CAMPANHAS_POR_DIA = 5;
 
-// Meia-noite de "hoje" no fuso de Sao Paulo, em ISO -- usado pra limitar a
-// 1 campanha criada por dia por corretor. Brasil nao tem mais horario de
+// Meia-noite de "hoje" no fuso de Sao Paulo, em ISO -- usado pra limitar
+// quantas campanhas por dia por corretor. Brasil nao tem mais horario de
 // verao (desde 2019), entao -03:00 fixo e' seguro.
 function inicioDoDiaSaoPauloISO() {
   const dataSP = new Intl.DateTimeFormat('en-CA', {
@@ -796,19 +797,19 @@ app.post('/api/campanhas', requireAuth, async (req, res) => {
       }
     }
 
-    // Trava anti-banimento: no maximo 1 campanha criada por dia por
-    // corretor, e nenhuma outra campanha ainda pendente pode disparar a
-    // menos de 5 minutos de distancia -- evita duas remessas de mensagens
-    // caindo em cima uma da outra, que e' um padrao que o WhatsApp associa
-    // a spam.
+    // Trava anti-banimento: no maximo MAX_CAMPANHAS_POR_DIA campanhas criadas
+    // por dia por corretor, e nenhuma outra campanha ainda pendente pode
+    // disparar a menos de 5 minutos de distancia -- evita duas remessas de
+    // mensagens caindo em cima uma da outra, que e' um padrao que o WhatsApp
+    // associa a spam.
     const { count: campanhasHoje, error: contagemDiaError } = await supabase
       .from('campanhas')
       .select('id', { count: 'exact', head: true })
       .eq('instance', req.instance)
       .gte('created_at', inicioDoDiaSaoPauloISO());
     if (contagemDiaError) throw contagemDiaError;
-    if ((campanhasHoje || 0) >= 1) {
-      return res.status(429).json({ error: 'Só é permitido criar 1 campanha por dia. Tente novamente amanhã.' });
+    if ((campanhasHoje || 0) >= MAX_CAMPANHAS_POR_DIA) {
+      return res.status(429).json({ error: `Só é permitido criar ${MAX_CAMPANHAS_POR_DIA} campanhas por dia. Tente novamente amanhã.` });
     }
 
     const { data: campanhasPendentes, error: pendentesError } = await supabase

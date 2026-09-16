@@ -16,6 +16,7 @@ import { formatDataHora, formatTelefone, mesmoDiaSaoPaulo } from '../utils';
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
 const INTERVALO_MIN_ENTRE_CAMPANHAS_MS = 5 * 60 * 1000;
+const MAX_CAMPANHAS_POR_DIA = 5;
 
 type Aba = 'nova' | 'historico';
 type Etapa = 1 | 2 | 3 | 4 | 5;
@@ -362,11 +363,12 @@ export function CampanhasPage() {
   const leadIds = useMemo(() => Array.from(draft.leadsSelecionados.keys()), [draft.leadsSelecionados]);
   const { data: contagemFinal } = useDestinatariosContagem(draft.destinatariosModo, draft.destinatariosEtapa, leadIds);
 
-  // Mesma regra do backend (1 campanha criada por dia, fuso de Sao Paulo) --
-  // avisa antes do corretor preencher o wizard inteiro pra so descobrir no
-  // final que nao pode criar mais uma hoje.
+  // Mesma regra do backend (MAX_CAMPANHAS_POR_DIA campanhas criadas por dia,
+  // fuso de Sao Paulo) -- avisa antes do corretor preencher o wizard inteiro
+  // pra so descobrir no final que nao pode criar mais uma hoje.
   const agora = new Date().toISOString();
-  const jaCriouCampanhaHoje = (campanhasData?.data ?? []).some((c) => mesmoDiaSaoPaulo(c.created_at, agora));
+  const campanhasCriadasHoje = (campanhasData?.data ?? []).filter((c) => mesmoDiaSaoPaulo(c.created_at, agora)).length;
+  const jaCriouCampanhaHoje = campanhasCriadasHoje >= MAX_CAMPANHAS_POR_DIA;
 
   function resetar() {
     setDraft(estadoInicial());
@@ -471,12 +473,12 @@ export function CampanhasPage() {
       ) : jaCriouCampanhaHoje ? (
         <Card className="p-4">
           <p className="text-sm text-amber-700">
-            ⚠️ Você já criou uma campanha hoje. Pra reduzir o risco de bloqueio no WhatsApp, só é permitida 1
-            campanha nova por dia — tente novamente amanhã, ou veja o{' '}
+            ⚠️ Você já criou {campanhasCriadasHoje} campanhas hoje. Pra reduzir o risco de bloqueio no WhatsApp, só
+            são permitidas {MAX_CAMPANHAS_POR_DIA} campanhas novas por dia — tente novamente amanhã, ou veja o{' '}
             <button className="underline" onClick={() => setAba('historico')}>
               histórico
             </button>{' '}
-            pra acompanhar a de hoje.
+            pra acompanhar as de hoje.
           </p>
         </Card>
       ) : (
