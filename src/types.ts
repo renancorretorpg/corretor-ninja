@@ -119,6 +119,11 @@ export interface QrCodeResultado {
   qrcode_base64: string | null;
 }
 
+export interface VerificarClienteResultado {
+  existe: boolean | null;
+  erro: string | null;
+}
+
 export interface NovoCorretorPayload {
   instance: string;
   nome_corretor: string;

@@ -11,10 +11,11 @@ import {
 } from '../api';
 import type { AgendamentoTipo, Campanha, DestinatariosModo, ImagemDrive, Lead } from '../types';
 import { Badge, Button, Card, Input, Select } from './ui';
-import { formatDataHora, formatTelefone } from '../utils';
+import { formatDataHora, formatTelefone, mesmoDiaSaoPaulo } from '../utils';
 
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
+const INTERVALO_MIN_ENTRE_CAMPANHAS_MS = 5 * 60 * 1000;
 
 type Aba = 'nova' | 'historico';
 type Etapa = 1 | 2 | 3 | 4 | 5;
@@ -356,9 +357,16 @@ export function CampanhasPage() {
   const [draft, setDraft] = useState(estadoInicial());
   const [erro, setErro] = useState('');
   const createCampanha = useCreateCampanha();
+  const { data: campanhasData } = useCampanhas();
 
   const leadIds = useMemo(() => Array.from(draft.leadsSelecionados.keys()), [draft.leadsSelecionados]);
   const { data: contagemFinal } = useDestinatariosContagem(draft.destinatariosModo, draft.destinatariosEtapa, leadIds);
+
+  // Mesma regra do backend (1 campanha criada por dia, fuso de Sao Paulo) --
+  // avisa antes do corretor preencher o wizard inteiro pra so descobrir no
+  // final que nao pode criar mais uma hoje.
+  const agora = new Date().toISOString();
+  const jaCriouCampanhaHoje = (campanhasData?.data ?? []).some((c) => mesmoDiaSaoPaulo(c.created_at, agora));
 
   function resetar() {
     setDraft(estadoInicial());
@@ -380,6 +388,20 @@ export function CampanhasPage() {
       if (draft.agendamentoTipo === 'agendado') {
         if (!draft.agendamentoData) return 'Escolha a data e hora do agendamento.';
         if (new Date(draft.agendamentoData) <= new Date()) return 'Escolha uma data/hora futura.';
+      }
+      // Mesma trava de 5 min do backend, so que aqui pra avisar antes de
+      // chegar na revisão -- o backend ainda reforça isso na hora de salvar.
+      const horarioNovo = draft.agendamentoTipo === 'imediato' ? new Date() : new Date(draft.agendamentoData);
+      const pendentes = (campanhasData?.data ?? []).filter((c) =>
+        ['pendente_envio', 'agendada', 'enviando'].includes(c.status),
+      );
+      const conflito = pendentes.find((c) => {
+        const horarioExistente =
+          c.agendamento_tipo === 'imediato' || !c.agendamento_data ? new Date(c.created_at) : new Date(c.agendamento_data);
+        return Math.abs(horarioExistente.getTime() - horarioNovo.getTime()) < INTERVALO_MIN_ENTRE_CAMPANHAS_MS;
+      });
+      if (conflito) {
+        return `Já existe uma campanha ("${conflito.nome}") com envio muito próximo desse horário. Escolha um horário com pelo menos 5 minutos de diferença, pra reduzir o risco de bloqueio no WhatsApp.`;
       }
     }
     return null;
@@ -446,6 +468,17 @@ export function CampanhasPage() {
 
       {aba === 'historico' ? (
         <HistoricoCampanhas />
+      ) : jaCriouCampanhaHoje ? (
+        <Card className="p-4">
+          <p className="text-sm text-amber-700">
+            ⚠️ Você já criou uma campanha hoje. Pra reduzir o risco de bloqueio no WhatsApp, só é permitida 1
+            campanha nova por dia — tente novamente amanhã, ou veja o{' '}
+            <button className="underline" onClick={() => setAba('historico')}>
+              histórico
+            </button>{' '}
+            pra acompanhar a de hoje.
+          </p>
+        </Card>
       ) : (
         <Card className="p-4">
           <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">

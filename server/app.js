@@ -14,6 +14,7 @@ const {
   N8N_CANCELAR_WEBHOOK_URL,
   N8N_ADICIONAR_IMAGEM_WEBHOOK_URL,
   N8N_CRIAR_CLIENTE_WEBHOOK_URL,
+  N8N_VERIFICAR_CLIENTE_WEBHOOK_URL,
   N8N_WEBHOOK_SECRET,
   PANEL_PUBLIC_URL,
   EVOLUTION_API_URL,
@@ -585,6 +586,29 @@ app.delete('/api/etapas/:id', requireAuth, async (req, res) => {
 
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
+const INTERVALO_MIN_ENTRE_CAMPANHAS_MS = 5 * 60 * 1000;
+
+// Meia-noite de "hoje" no fuso de Sao Paulo, em ISO -- usado pra limitar a
+// 1 campanha criada por dia por corretor. Brasil nao tem mais horario de
+// verao (desde 2019), entao -03:00 fixo e' seguro.
+function inicioDoDiaSaoPauloISO() {
+  const dataSP = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  return new Date(`${dataSP}T00:00:00-03:00`).toISOString();
+}
+
+// Horario em que a campanha efetivamente dispara mensagens: agora (se
+// imediata) ou a data agendada.
+function horarioEfetivoCampanha(campanha) {
+  if (campanha.agendamento_tipo === 'imediato' || !campanha.agendamento_data) {
+    return new Date(campanha.created_at);
+  }
+  return new Date(campanha.agendamento_data);
+}
 
 async function contarDestinatarios({ modo, etapa, leadIds, instance }) {
   if (modo === 'todos') {
@@ -852,6 +876,38 @@ app.post('/api/campanhas', requireAuth, async (req, res) => {
       if (!agendamentoData || new Date(agendamentoData) <= new Date()) {
         return res.status(400).json({ error: 'Escolha uma data/hora futura para o agendamento.' });
       }
+    }
+
+    // Trava anti-banimento: no maximo 1 campanha criada por dia por
+    // corretor, e nenhuma outra campanha ainda pendente pode disparar a
+    // menos de 5 minutos de distancia -- evita duas remessas de mensagens
+    // caindo em cima uma da outra, que e' um padrao que o WhatsApp associa
+    // a spam.
+    const { count: campanhasHoje, error: contagemDiaError } = await supabase
+      .from('campanhas')
+      .select('id', { count: 'exact', head: true })
+      .eq('instance', req.instance)
+      .gte('created_at', inicioDoDiaSaoPauloISO());
+    if (contagemDiaError) throw contagemDiaError;
+    if ((campanhasHoje || 0) >= 1) {
+      return res.status(429).json({ error: 'Só é permitido criar 1 campanha por dia. Tente novamente amanhã.' });
+    }
+
+    const { data: campanhasPendentes, error: pendentesError } = await supabase
+      .from('campanhas')
+      .select('nome, agendamento_tipo, agendamento_data, created_at')
+      .eq('instance', req.instance)
+      .in('status', ['pendente_envio', 'agendada', 'enviando']);
+    if (pendentesError) throw pendentesError;
+
+    const horarioNovaCampanha = agendamentoTipo === 'imediato' ? new Date() : new Date(agendamentoData);
+    const conflito = (campanhasPendentes || []).find(
+      (c) => Math.abs(horarioEfetivoCampanha(c) - horarioNovaCampanha) < INTERVALO_MIN_ENTRE_CAMPANHAS_MS,
+    );
+    if (conflito) {
+      return res.status(400).json({
+        error: `Já existe uma campanha ("${conflito.nome}") com envio muito próximo desse horário. Escolha um horário com pelo menos 5 minutos de diferença, pra reduzir o risco de bloqueio no WhatsApp.`,
+      });
     }
 
     const count = await contarDestinatarios({ modo, etapa, leadIds, instance: req.instance });
@@ -1202,6 +1258,32 @@ app.post('/api/admin/corretores/:instance/qrcode', requireAuth, requireAdmin, as
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
   }
+});
+
+// Checa se ja existe um cliente com esse instance na tabela `clientes` do
+// n8n (Evolution/CRM/leads) -- usado pra avisar o admin antes de aprovar um
+// cadastro/convite com um identificador que já pertence a outro corretor
+// (ex: reaproveitar o link de convite pra alguem que ja tem tudo criado
+// manualmente, sem perceber que o identificador bate com o de outra pessoa).
+async function clienteJaExiste(instance) {
+  if (!N8N_VERIFICAR_CLIENTE_WEBHOOK_URL) return { existe: null, erro: 'N8N_VERIFICAR_CLIENTE_WEBHOOK_URL não configurado no painel.' };
+  try {
+    const resp = await fetchComTimeout(N8N_VERIFICAR_CLIENTE_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': N8N_WEBHOOK_SECRET },
+      body: JSON.stringify({ instance }),
+    }, 10000);
+    const corpo = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { existe: null, erro: corpo.error || `n8n respondeu ${resp.status}` };
+    return { existe: Boolean(corpo.existe), erro: null };
+  } catch (err) {
+    return { existe: null, erro: err.message };
+  }
+}
+
+app.get('/api/admin/corretores/verificar/:instance', requireAuth, requireAdmin, async (req, res) => {
+  const resultado = await clienteJaExiste(req.params.instance);
+  res.json(resultado);
 });
 
 function validarDadosCorretor(d) {
