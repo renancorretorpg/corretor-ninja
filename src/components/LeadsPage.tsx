@@ -6,6 +6,7 @@ import { LeadDetailModal } from './LeadDetailModal';
 import { NovoLeadModal } from './NovoLeadModal';
 import { Button } from './ui';
 import type { Lead } from '../types';
+import { useDebouncedValue } from '../useDebouncedValue';
 
 type Modo = 'lista' | 'kanban';
 
@@ -19,6 +20,7 @@ function getModoInicial(): Modo {
 export function LeadsPage() {
   const [modo, setModo] = useState<Modo>(getModoInicial);
   const [search, setSearch] = useState('');
+  const buscaDebounced = useDebouncedValue(search);
   const [status, setStatus] = useState('');
   const [origem, setOrigem] = useState('');
   const [leadSelecionado, setLeadSelecionado] = useState<Lead | null>(null);
@@ -62,9 +64,9 @@ export function LeadsPage() {
       </div>
 
       {modo === 'lista' ? (
-        <ListaLeads status={status} origem={origem} search={search} onSelectLead={setLeadSelecionado} />
+        <ListaLeads status={status} origem={origem} search={buscaDebounced} onSelectLead={setLeadSelecionado} />
       ) : (
-        <KanbanLeads status={status} origem={origem} search={search} onSelectLead={setLeadSelecionado} />
+        <KanbanLeads status={status} origem={origem} search={buscaDebounced} onSelectLead={setLeadSelecionado} />
       )}
 
       <LeadDetailModal lead={leadSelecionado} onClose={() => setLeadSelecionado(null)} />

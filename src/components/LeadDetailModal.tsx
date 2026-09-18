@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDeleteLead, useEtapas, useUpdateLead } from '../api';
-import { formatDataHora } from '../utils';
+import { MSG_TELEFONE_INVALIDO, formatDataHora, telefoneValido } from '../utils';
 import type { Lead } from '../types';
 import { Button, Input, Modal, Select } from './ui';
 
@@ -17,6 +17,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
   const [notas, setNotas] = useState('');
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
   const [textoExclusao, setTextoExclusao] = useState('');
+  const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
     if (lead) {
@@ -28,20 +29,44 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
       setNotas(lead.notas ?? '');
       setConfirmandoExclusao(false);
       setTextoExclusao('');
+      setErro(null);
     }
   }, [lead]);
 
   if (!lead) return null;
 
   const etapas = etapasData?.data ?? [];
+  const numeroAlterado = numero !== (lead.numero ?? '');
+  const telefoneOk = !numeroAlterado || telefoneValido(numero);
+  const podeSalvar = !!nome.trim() && telefoneOk;
 
   async function handleSalvar() {
     if (!lead) return;
-    await updateLead.mutateAsync({
-      id: lead.id,
-      updates: { nome, sobrenome, numero, status, origem, notas },
-    });
-    onClose();
+    setErro(null);
+    if (!nome.trim()) {
+      setErro('Nome é obrigatório.');
+      return;
+    }
+    if (!telefoneOk) {
+      setErro(MSG_TELEFONE_INVALIDO);
+      return;
+    }
+    try {
+      await updateLead.mutateAsync({
+        id: lead.id,
+        updates: {
+          nome: nome.trim(),
+          sobrenome: sobrenome.trim(),
+          ...(numeroAlterado ? { numero } : {}),
+          status,
+          origem: origem.trim(),
+          notas,
+        },
+      });
+      onClose();
+    } catch (err) {
+      setErro((err as Error).message);
+    }
   }
 
   function confirmarExclusao() {
@@ -87,20 +112,29 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           <span>Atualizado em {formatDataHora(lead.updated_at)}</span>
         </div>
 
+        {erro && <p className="text-sm text-red-600">{erro}</p>}
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Nome</label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} />
+            <Input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={120} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Sobrenome</label>
-            <Input value={sobrenome} onChange={(e) => setSobrenome(e.target.value)} />
+            <Input value={sobrenome} onChange={(e) => setSobrenome(e.target.value)} maxLength={120} />
           </div>
         </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Telefone</label>
-          <Input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="5511999999999" />
+          <Input
+            value={numero}
+            onChange={(e) => setNumero(e.target.value)}
+            placeholder="5511999999999"
+            inputMode="tel"
+            maxLength={25}
+          />
+          {numero.trim() && !telefoneOk && <p className="mt-1 text-xs text-red-600">{MSG_TELEFONE_INVALIDO}</p>}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -119,13 +153,14 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Imóvel de interesse</label>
-            <Input value={origem} onChange={(e) => setOrigem(e.target.value)} />
+            <Input value={origem} onChange={(e) => setOrigem(e.target.value)} maxLength={200} />
           </div>
         </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Notas</label>
           <textarea
+            maxLength={5000}
             className="min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             value={notas}
             onChange={(e) => setNotas(e.target.value)}
@@ -166,7 +201,7 @@ export function LeadDetailModal({ lead, onClose }: { lead: Lead | null; onClose:
             <Button variant="outline" onClick={onClose}>
               Cancelar
             </Button>
-            <Button onClick={handleSalvar} disabled={updateLead.isPending}>
+            <Button onClick={handleSalvar} disabled={updateLead.isPending || !podeSalvar}>
               Salvar
             </Button>
           </div>

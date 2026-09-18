@@ -11,6 +11,14 @@ export function formatTelefone(numero: string): string {
   return numero;
 }
 
+// Mesma regra do backend: 10 a 13 digitos (DDD + numero, com ou sem DDI 55).
+export function telefoneValido(numero: string): boolean {
+  const digits = numero.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+export const MSG_TELEFONE_INVALIDO = 'Telefone inválido. Use DDD + número (10 a 13 dígitos).';
+
 export function formatData(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });

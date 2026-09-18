@@ -68,7 +68,11 @@ function EtapaRow({
   }
 
   function trocarCor(cor: string) {
-    updateEtapa.mutate({ id: etapa.id, updates: { cor } });
+    setErro('');
+    updateEtapa.mutate(
+      { id: etapa.id, updates: { cor } },
+      { onError: (err) => setErro(`Não foi possível trocar a cor: ${(err as Error).message}`) },
+    );
   }
 
   function pedirRemocao() {
@@ -114,6 +118,7 @@ function EtapaRow({
             autoFocus
             value={nome}
             onChange={(e) => setNome(e.target.value)}
+            maxLength={40}
             onBlur={salvarNome}
             onKeyDown={(e) => {
               if (e.key === 'Enter') salvarNome();
@@ -185,6 +190,7 @@ export function EtapasPage() {
 
   const [novoNome, setNovoNome] = useState('');
   const [erroNovo, setErroNovo] = useState('');
+  const [erroReordenar, setErroReordenar] = useState('');
   const [etapasOrdenadas, setEtapasOrdenadas] = useState<Etapa[]>([]);
 
   useEffect(() => {
@@ -198,9 +204,19 @@ export function EtapasPage() {
     if (!over || active.id === over.id) return;
     const oldIndex = etapasOrdenadas.findIndex((e) => e.id === active.id);
     const newIndex = etapasOrdenadas.findIndex((e) => e.id === over.id);
+    const anterior = etapasOrdenadas;
     const nova = arrayMove(etapasOrdenadas, oldIndex, newIndex);
     setEtapasOrdenadas(nova);
-    reorderEtapas.mutate(nova.map((e, i) => ({ id: e.id, ordem: i + 1 })));
+    setErroReordenar('');
+    reorderEtapas.mutate(
+      nova.map((e, i) => ({ id: e.id, ordem: i + 1 })),
+      {
+        onError: (err) => {
+          setEtapasOrdenadas(anterior);
+          setErroReordenar(`Não foi possível salvar a nova ordem: ${(err as Error).message}`);
+        },
+      },
+    );
   }
 
   function adicionarEtapa() {
@@ -233,6 +249,7 @@ export function EtapasPage() {
           placeholder="Nome da nova etapa..."
           value={novoNome}
           onChange={(e) => setNovoNome(e.target.value)}
+          maxLength={40}
           onKeyDown={(e) => e.key === 'Enter' && adicionarEtapa()}
           disabled={atingiuLimite}
           className="w-full sm:max-w-xs"
@@ -245,6 +262,11 @@ export function EtapasPage() {
         )}
       </div>
       {erroNovo && <p className="mb-2 text-xs text-red-600">{erroNovo}</p>}
+      {erroReordenar && (
+        <p role="alert" className="mb-2 text-xs text-red-600">
+          {erroReordenar}
+        </p>
+      )}
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Carregando...</p>

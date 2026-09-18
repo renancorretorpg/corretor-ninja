@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   createColumnHelper,
   flexRender,
@@ -27,6 +27,12 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
 
   const sortBy = sorting[0]?.id ?? 'created_at';
   const sortDir = sorting[0]?.desc ? 'desc' : 'asc';
+
+  // Filtro/ordenacao novos mudam o total de resultados -- voltar pra pagina 1
+  // evita ficar numa pagina que nem existe mais (e mostrar "nenhum lead").
+  useEffect(() => {
+    setPage(1);
+  }, [status, origem, search, sortBy, sortDir]);
 
   const { data, isLoading, isError, error } = useLeads({
     page,
@@ -84,6 +90,11 @@ export function ListaLeads({ status, origem, search, onSelectLead }: ListaLeadsP
 
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  // Cobre o caso de leads excluidos/movidos deixarem a pagina atual vazia.
+  useEffect(() => {
+    if (data && page > totalPages) setPage(totalPages);
+  }, [data, page, totalPages]);
 
   if (isError) {
     return <p className="text-sm text-red-600">Erro ao carregar leads: {(error as Error).message}</p>;

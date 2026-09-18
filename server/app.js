@@ -110,6 +110,18 @@ function sanitizarTermoBusca(term) {
   return term.replace(/[,()"]/g, '');
 }
 
+// Telefone valido = 10 a 13 digitos (DDD + numero, com ou sem DDI 55). Barra
+// lixo tipo "1" ou "abc" antes de chegar no disparo do WhatsApp.
+function normalizarTelefone(valor) {
+  const digitos = String(valor ?? '').replace(/\D/g, '');
+  if (digitos.length < 10 || digitos.length > 13) return null;
+  return digitos;
+}
+
+const MAX_TAMANHO_NOME = 120;
+const MAX_TAMANHO_NOTAS = 5000;
+const MAX_TAMANHO_ETAPA = 40;
+
 // GET /api/leads?page=1&pageSize=25&status=&origem=&search=&sortBy=created_at&sortDir=desc
 app.get('/api/leads', requireAuth, async (req, res) => {
   try {
@@ -193,10 +205,42 @@ app.patch('/api/leads/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar.' });
     }
 
+    for (const field of ['nome', 'sobrenome', 'origem', 'notas', 'status']) {
+      if (updates[field] === undefined) continue;
+      if (updates[field] !== null && typeof updates[field] !== 'string') {
+        return res.status(400).json({ error: `Campo "${field}" inválido.` });
+      }
+      if (typeof updates[field] === 'string') updates[field] = updates[field].trim();
+    }
+    if (updates.nome !== undefined && !updates.nome) {
+      return res.status(400).json({ error: 'Nome é obrigatório.' });
+    }
+    if (updates.nome && updates.nome.length > MAX_TAMANHO_NOME) {
+      return res.status(400).json({ error: 'Nome muito longo.' });
+    }
+    if (updates.notas && updates.notas.length > MAX_TAMANHO_NOTAS) {
+      return res.status(400).json({ error: 'Notas muito longas.' });
+    }
+    for (const field of ['sobrenome', 'origem']) {
+      if (updates[field] === '') updates[field] = null;
+    }
+
     if (updates.numero !== undefined) {
-      updates.numero = String(updates.numero).replace(/\D/g, '');
+      updates.numero = normalizarTelefone(updates.numero);
       if (!updates.numero) {
-        return res.status(400).json({ error: 'Telefone inválido.' });
+        return res.status(400).json({ error: 'Telefone inválido. Use DDD + número (10 a 13 dígitos).' });
+      }
+      const { data: duplicado, error: dupError } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('instance', req.instance)
+        .eq('numero', updates.numero)
+        .neq('id', id)
+        .limit(1)
+        .maybeSingle();
+      if (dupError) throw dupError;
+      if (duplicado) {
+        return res.status(409).json({ error: 'Já existe um lead cadastrado com esse telefone.' });
       }
     }
 
@@ -267,7 +311,7 @@ app.post('/api/leads', requireAuth, async (req, res) => {
   try {
     const nome = (req.body.nome || '').toString().trim();
     const sobrenome = (req.body.sobrenome || '').toString().trim();
-    const numero = (req.body.numero || '').toString().replace(/\D/g, '');
+    const numero = normalizarTelefone(req.body.numero);
     const origem = (req.body.origem || '').toString().trim();
     const notas = (req.body.notas || '').toString().trim();
     let status = (req.body.status || '').toString().trim();
@@ -275,8 +319,14 @@ app.post('/api/leads', requireAuth, async (req, res) => {
     if (!nome) {
       return res.status(400).json({ error: 'Nome é obrigatório.' });
     }
+    if (nome.length > MAX_TAMANHO_NOME || sobrenome.length > MAX_TAMANHO_NOME) {
+      return res.status(400).json({ error: 'Nome muito longo.' });
+    }
+    if (notas.length > MAX_TAMANHO_NOTAS) {
+      return res.status(400).json({ error: 'Notas muito longas.' });
+    }
     if (!numero) {
-      return res.status(400).json({ error: 'Telefone é obrigatório.' });
+      return res.status(400).json({ error: 'Telefone inválido. Use DDD + número (10 a 13 dígitos).' });
     }
 
     // Mesma regra do PATCH: so exige bater com uma etapa cadastrada se a
@@ -309,6 +359,7 @@ app.post('/api/leads', requireAuth, async (req, res) => {
       .select('id')
       .eq('instance', req.instance)
       .eq('numero', numero)
+      .limit(1)
       .maybeSingle();
     if (existente) {
       return res.status(409).json({ error: 'Já existe um lead cadastrado com esse telefone.' });
@@ -403,6 +454,9 @@ app.post('/api/etapas', requireAuth, async (req, res) => {
     if (!nome) {
       return res.status(400).json({ error: 'Nome da etapa é obrigatório.' });
     }
+    if (nome.length > MAX_TAMANHO_ETAPA) {
+      return res.status(400).json({ error: `Nome da etapa deve ter no máximo ${MAX_TAMANHO_ETAPA} caracteres.` });
+    }
 
     const { count, error: countError } = await supabase
       .from('etapas')
@@ -462,7 +516,10 @@ app.patch('/api/etapas/:id', requireAuth, async (req, res) => {
     }
 
     const updates = { updated_at: new Date().toISOString() };
-    const novoNome = req.body.nome !== undefined ? req.body.nome.trim() : undefined;
+    const novoNome = req.body.nome !== undefined ? String(req.body.nome).trim() : undefined;
+    if (novoNome && novoNome.length > MAX_TAMANHO_ETAPA) {
+      return res.status(400).json({ error: `Nome da etapa deve ter no máximo ${MAX_TAMANHO_ETAPA} caracteres.` });
+    }
 
     if (novoNome && novoNome !== atual.nome) {
       const { data: existente } = await supabase
@@ -513,11 +570,16 @@ app.post('/api/etapas/reorder', requireAuth, async (req, res) => {
     if (!Array.isArray(itens)) {
       return res.status(400).json({ error: 'Formato inválido.' });
     }
-    await Promise.all(
+    if (itens.some((i) => !Number.isInteger(i?.id) || !Number.isInteger(i?.ordem))) {
+      return res.status(400).json({ error: 'Formato inválido.' });
+    }
+    const resultados = await Promise.all(
       itens.map(({ id, ordem }) =>
         supabase.from('etapas').update({ ordem }).eq('id', id).eq('instance', req.instance),
       ),
     );
+    const falha = resultados.find((r) => r.error);
+    if (falha) throw falha.error;
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -609,6 +671,60 @@ function horarioEfetivoCampanha(campanha) {
     return new Date(campanha.created_at);
   }
   return new Date(campanha.agendamento_data);
+}
+
+// Serializa "checar limites + inserir campanha" por instance. Sem isso, dois
+// requests quase simultaneos (duplo clique, duas abas, retry do n8n) passam
+// ambos nos SELECTs de limite antes de qualquer INSERT acontecer. O painel
+// roda como um unico processo Express, entao um lock em memoria e' suficiente.
+const locksCampanha = new Map();
+async function comLockPorInstance(instance, fn) {
+  const anterior = locksCampanha.get(instance) || Promise.resolve();
+  let liberar;
+  const atual = new Promise((resolve) => { liberar = resolve; });
+  const fila = anterior.then(() => atual);
+  locksCampanha.set(instance, fila);
+  await anterior;
+  try {
+    return await fn();
+  } finally {
+    liberar();
+    if (locksCampanha.get(instance) === fila) locksCampanha.delete(instance);
+  }
+}
+
+// Trava anti-banimento (compartilhada entre painel e bot do WhatsApp): no
+// maximo MAX_CAMPANHAS_POR_DIA campanhas criadas por dia por corretor, e
+// nenhuma outra campanha pendente pode disparar a menos de 5 minutos de
+// distancia. Devolve { status, error } se bloqueado, ou null se liberado.
+async function verificarLimitesCampanha(instance, horarioNovaCampanha) {
+  const { count: campanhasHoje, error: contagemDiaError } = await supabase
+    .from('campanhas')
+    .select('id', { count: 'exact', head: true })
+    .eq('instance', instance)
+    .gte('created_at', inicioDoDiaSaoPauloISO());
+  if (contagemDiaError) throw contagemDiaError;
+  if ((campanhasHoje || 0) >= MAX_CAMPANHAS_POR_DIA) {
+    return { status: 429, error: `Só é permitido criar ${MAX_CAMPANHAS_POR_DIA} campanhas por dia. Tente novamente amanhã.` };
+  }
+
+  const { data: campanhasPendentes, error: pendentesError } = await supabase
+    .from('campanhas')
+    .select('nome, agendamento_tipo, agendamento_data, created_at')
+    .eq('instance', instance)
+    .in('status', ['pendente_envio', 'agendada', 'enviando']);
+  if (pendentesError) throw pendentesError;
+
+  const conflito = (campanhasPendentes || []).find(
+    (c) => Math.abs(horarioEfetivoCampanha(c) - horarioNovaCampanha) < INTERVALO_MIN_ENTRE_CAMPANHAS_MS,
+  );
+  if (conflito) {
+    return {
+      status: 400,
+      error: `Já existe uma campanha ("${conflito.nome}") com envio muito próximo desse horário. Escolha um horário com pelo menos 5 minutos de diferença, pra reduzir o risco de bloqueio no WhatsApp.`,
+    };
+  }
+  return null;
 }
 
 async function contarDestinatarios({ modo, etapa, leadIds, instance }) {
@@ -879,64 +995,43 @@ app.post('/api/campanhas', requireAuth, async (req, res) => {
       }
     }
 
-    // Trava anti-banimento: no maximo MAX_CAMPANHAS_POR_DIA campanhas criadas
-    // por dia por corretor, e nenhuma outra campanha ainda pendente pode
-    // disparar a menos de 5 minutos de distancia -- evita duas remessas de
-    // mensagens caindo em cima uma da outra, que e' um padrao que o WhatsApp
-    // associa a spam.
-    const { count: campanhasHoje, error: contagemDiaError } = await supabase
-      .from('campanhas')
-      .select('id', { count: 'exact', head: true })
-      .eq('instance', req.instance)
-      .gte('created_at', inicioDoDiaSaoPauloISO());
-    if (contagemDiaError) throw contagemDiaError;
-    if ((campanhasHoje || 0) >= MAX_CAMPANHAS_POR_DIA) {
-      return res.status(429).json({ error: `Só é permitido criar ${MAX_CAMPANHAS_POR_DIA} campanhas por dia. Tente novamente amanhã.` });
-    }
-
-    const { data: campanhasPendentes, error: pendentesError } = await supabase
-      .from('campanhas')
-      .select('nome, agendamento_tipo, agendamento_data, created_at')
-      .eq('instance', req.instance)
-      .in('status', ['pendente_envio', 'agendada', 'enviando']);
-    if (pendentesError) throw pendentesError;
-
-    const horarioNovaCampanha = agendamentoTipo === 'imediato' ? new Date() : new Date(agendamentoData);
-    const conflito = (campanhasPendentes || []).find(
-      (c) => Math.abs(horarioEfetivoCampanha(c) - horarioNovaCampanha) < INTERVALO_MIN_ENTRE_CAMPANHAS_MS,
-    );
-    if (conflito) {
-      return res.status(400).json({
-        error: `Já existe uma campanha ("${conflito.nome}") com envio muito próximo desse horário. Escolha um horário com pelo menos 5 minutos de diferença, pra reduzir o risco de bloqueio no WhatsApp.`,
-      });
-    }
-
-    const count = await contarDestinatarios({ modo, etapa, leadIds, instance: req.instance });
-    if (count === 0) {
-      return res.status(400).json({ error: 'Nenhum destinatário encontrado com essa seleção.' });
-    }
-
     const nome = (req.body.nome || '').trim() || `Campanha ${new Date().toLocaleDateString('pt-BR')}`;
     const status = agendamentoTipo === 'imediato' ? 'pendente_envio' : 'agendada';
+    const horarioNovaCampanha = agendamentoTipo === 'imediato' ? new Date() : new Date(agendamentoData);
 
-    const { data, error } = await supabase
-      .from('campanhas')
-      .insert({
-        instance: req.instance,
-        nome,
-        mensagens,
-        imagens,
-        destinatarios_modo: modo,
-        destinatarios_etapa: etapa,
-        destinatarios_lead_ids: leadIds,
-        destinatarios_count: count,
-        agendamento_tipo: agendamentoTipo,
-        agendamento_data: agendamentoData,
-        status,
-      })
-      .select()
-      .single();
-    if (error) throw error;
+    const criacao = await comLockPorInstance(req.instance, async () => {
+      const bloqueio = await verificarLimitesCampanha(req.instance, horarioNovaCampanha);
+      if (bloqueio) return { bloqueio };
+
+      const count = await contarDestinatarios({ modo, etapa, leadIds, instance: req.instance });
+      if (count === 0) {
+        return { bloqueio: { status: 400, error: 'Nenhum destinatário encontrado com essa seleção.' } };
+      }
+
+      const { data: inserida, error: insertError } = await supabase
+        .from('campanhas')
+        .insert({
+          instance: req.instance,
+          nome,
+          mensagens,
+          imagens,
+          destinatarios_modo: modo,
+          destinatarios_etapa: etapa,
+          destinatarios_lead_ids: leadIds,
+          destinatarios_count: count,
+          agendamento_tipo: agendamentoTipo,
+          agendamento_data: agendamentoData,
+          status,
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+      return { data: inserida };
+    });
+    if (criacao.bloqueio) {
+      return res.status(criacao.bloqueio.status).json({ error: criacao.bloqueio.error });
+    }
+    const data = criacao.data;
 
     // Trava as fotos escolhidas numa subpasta propria da campanha (nao afeta
     // a pasta compartilhada usada pelo fluxo de WhatsApp), e ja dispara na
@@ -1063,32 +1158,41 @@ app.post('/api/campanhas/from-whatsapp', async (req, res) => {
       return res.status(400).json({ error: 'Escolha uma data/hora futura para o agendamento.' });
     }
 
-    const count = await contarDestinatarios({ modo, etapa, instance });
-    if (count === 0) {
-      return res.status(400).json({ error: 'Nenhum destinatário encontrado com essa seleção.' });
+    const nome = `Campanha via WhatsApp ${new Date().toLocaleDateString('pt-BR')}`;
+    const criacao = await comLockPorInstance(instance, async () => {
+      const bloqueio = await verificarLimitesCampanha(instance, new Date(agendamentoData));
+      if (bloqueio) return { bloqueio };
+
+      const count = await contarDestinatarios({ modo, etapa, instance });
+      if (count === 0) {
+        return { bloqueio: { status: 400, error: 'Nenhum destinatário encontrado com essa seleção.' } };
+      }
+
+      const { data: inserida, error: insertError } = await supabase
+        .from('campanhas')
+        .insert({
+          instance,
+          nome,
+          mensagens,
+          imagens: [],
+          destinatarios_modo: modo,
+          destinatarios_etapa: etapa,
+          destinatarios_lead_ids: null,
+          destinatarios_count: count,
+          agendamento_tipo: 'agendado',
+          agendamento_data: agendamentoData,
+          status: 'agendada',
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+      return { data: inserida };
+    });
+    if (criacao.bloqueio) {
+      return res.status(criacao.bloqueio.status).json({ error: criacao.bloqueio.error });
     }
 
-    const nome = `Campanha via WhatsApp ${new Date().toLocaleDateString('pt-BR')}`;
-    const { data, error } = await supabase
-      .from('campanhas')
-      .insert({
-        instance,
-        nome,
-        mensagens,
-        imagens: [],
-        destinatarios_modo: modo,
-        destinatarios_etapa: etapa,
-        destinatarios_lead_ids: null,
-        destinatarios_count: count,
-        agendamento_tipo: 'agendado',
-        agendamento_data: agendamentoData,
-        status: 'agendada',
-      })
-      .select()
-      .single();
-    if (error) throw error;
-
-    res.status(201).json({ data });
+    res.status(201).json({ data: criacao.data });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
@@ -1327,14 +1431,34 @@ async function criarInstanciaEvolution(instance) {
 // tabela `clientes` -- o painel nunca guarda nem ve a chave de
 // criptografia). Evolution/Calendar do corretor ficam vazios e precisam
 // ser configurados a parte antes de marcar o corretor como ativo.
-async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, whatsappNumero, crmLogin, crmSenha, drivePastaTeasers }) {
-  const { data: existente } = await supabase
+// Compara ignorando maiusculas/minusculas ("Gabriel" vs "gabriel" ja causou um
+// setup paralelo por engano). Escapa % e _ pra o ilike tratar o valor como
+// texto literal.
+async function perfilComInstance(instance) {
+  const literal = instance.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const { data, error } = await supabase
     .from('corretor_perfis')
     .select('instance')
-    .eq('instance', instance)
+    .ilike('instance', literal)
+    .limit(1)
     .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+function validarFormatoInstance(instance) {
+  if (!/^[a-zA-Z0-9_-]{1,40}$/.test(instance)) {
+    const erro = new Error('O identificador só pode ter letras, números, "-" e "_" (até 40 caracteres).');
+    erro.status = 400;
+    throw erro;
+  }
+}
+
+async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, whatsappNumero, crmLogin, crmSenha, drivePastaTeasers }) {
+  validarFormatoInstance(instance);
+  const existente = await perfilComInstance(instance);
   if (existente) {
-    const erro = new Error('Já existe um corretor cadastrado com esse identificador.');
+    const erro = new Error(`Já existe um corretor cadastrado com esse identificador ("${existente.instance}").`);
     erro.status = 409;
     throw erro;
   }
@@ -1437,13 +1561,10 @@ app.post('/api/admin/corretores', requireAuth, requireAdmin, async (req, res) =>
 // nem chama o webhook de criacao no n8n, pra nao duplicar/sobrescrever o
 // que o corretor ja tem la.
 async function vincularAcessoPainel({ instance, email, senha, isAdmin, drivePastaTeasers }) {
-  const { data: existente } = await supabase
-    .from('corretor_perfis')
-    .select('instance')
-    .eq('instance', instance)
-    .maybeSingle();
+  validarFormatoInstance(instance);
+  const existente = await perfilComInstance(instance);
   if (existente) {
-    const erro = new Error('Esse identificador já tem acesso ao painel.');
+    const erro = new Error(`Esse identificador já tem acesso ao painel ("${existente.instance}").`);
     erro.status = 409;
     throw erro;
   }

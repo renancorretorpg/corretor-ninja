@@ -12,6 +12,7 @@ import {
 import type { AgendamentoTipo, Campanha, DestinatariosModo, ImagemDrive, Lead } from '../types';
 import { Badge, Button, Card, Input, Select } from './ui';
 import { formatDataHora, formatTelefone, mesmoDiaSaoPaulo } from '../utils';
+import { useDebouncedValue } from '../useDebouncedValue';
 
 const MIN_MENSAGENS = 3;
 const MAX_IMAGENS = 4;
@@ -230,7 +231,8 @@ function WizardDestinatarios({
 }) {
   const { data: etapasData } = useEtapas();
   const [busca, setBusca] = useState('');
-  const { data: buscaData } = useBuscarLeads(busca);
+  const buscaDebounced = useDebouncedValue(busca);
+  const { data: buscaData } = useBuscarLeads(buscaDebounced);
   const leadIds = useMemo(() => Array.from(leadsSelecionados.keys()), [leadsSelecionados]);
   const { data: contagemData, isFetching: contando } = useDestinatariosContagem(modo, etapa, leadIds);
 

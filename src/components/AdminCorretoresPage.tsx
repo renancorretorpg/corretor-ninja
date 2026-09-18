@@ -12,7 +12,7 @@ import {
   useVerificarClienteExistente,
   useVincularAcesso,
 } from '../api';
-import type { Corretor, Convite, NovoCorretorResultado } from '../types';
+import type { Corretor, Convite, NovoCorretorResultado, VerificarClienteResultado } from '../types';
 import { Badge, Button, Card, Input, Modal } from './ui';
 
 function slugify(nome: string): string {
@@ -24,6 +24,43 @@ function slugify(nome: string): string {
       .split(/\s+/)[0]
       ?.replace(/[^a-zA-Z0-9]/g, '') || ''
   );
+}
+
+// A checagem de "identificador ja existe" nao pode falhar em silencio: se nao
+// deu pra verificar, o admin decide conscientemente (tentar de novo ou seguir
+// sem a garantia) em vez de o sistema assumir que o identificador esta livre.
+function AvisoNaoVerificado({
+  motivo,
+  onCancelar,
+  onContinuar,
+  ocupado,
+}: {
+  motivo: string;
+  onCancelar: () => void;
+  onContinuar: () => void;
+  ocupado: boolean;
+}) {
+  return (
+    <div role="alert" className="mt-2 space-y-2 rounded-md border border-red-200 bg-red-50 p-3">
+      <p className="text-sm text-red-800">
+        ⚠️ Não foi possível verificar se esse identificador já existe ({motivo}). Continuar sem verificar pode criar um
+        setup duplicado (ex.: &quot;Gabriel&quot; vs &quot;gabriel&quot;). Tente de novo em instantes ou continue por sua conta e
+        risco.
+      </p>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancelar}>
+          Cancelar
+        </Button>
+        <Button variant="outline" onClick={onContinuar} disabled={ocupado}>
+          Continuar sem verificar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function verificacaoComFalha(err: unknown): VerificarClienteResultado {
+  return { existe: null, erro: err instanceof Error ? err.message : 'erro desconhecido' };
 }
 
 function estadoInicial() {
@@ -87,6 +124,7 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
   const [copiado, setCopiado] = useState(false);
   const [finalizado, setFinalizado] = useState(false);
   const [avisoExistente, setAvisoExistente] = useState(false);
+  const [naoVerificado, setNaoVerificado] = useState<string | null>(null);
 
   function copiarLink() {
     navigator.clipboard?.writeText(convite.url).then(() => {
@@ -124,8 +162,13 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
       return;
     }
     setErro('');
-    const verificacao = await verificarCliente.mutateAsync(instance.trim()).catch(() => null);
-    if (verificacao?.existe) {
+    setNaoVerificado(null);
+    const verificacao = await verificarCliente.mutateAsync(instance.trim()).catch(verificacaoComFalha);
+    if (verificacao.existe === null) {
+      setNaoVerificado(verificacao.erro || 'erro desconhecido');
+      return;
+    }
+    if (verificacao.existe) {
       setAvisoExistente(true);
       return;
     }
@@ -171,6 +214,7 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
               onChange={(e) => {
                 setInstance(e.target.value);
                 setAvisoExistente(false);
+                setNaoVerificado(null);
               }}
               placeholder="renan"
             />
@@ -197,6 +241,17 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
             </Button>
           </div>
         </div>
+      )}
+      {naoVerificado && (
+        <AvisoNaoVerificado
+          motivo={naoVerificado}
+          onCancelar={() => setNaoVerificado(null)}
+          onContinuar={() => {
+            setNaoVerificado(null);
+            finalizarConfirmado();
+          }}
+          ocupado={finalizar.isPending}
+        />
       )}
       {erro && <p className="mt-2 text-sm text-red-600">{erro}</p>}
     </div>
@@ -380,6 +435,7 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
   const [form, setForm] = useState(estadoInicial());
   const [erro, setErro] = useState('');
   const [avisoExistente, setAvisoExistente] = useState(false);
+  const [naoVerificado, setNaoVerificado] = useState<string | null>(null);
 
   function atualizarNome(nome: string) {
     setForm((f) => ({
@@ -388,11 +444,13 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
       instance: f.instanceEditadaManualmente ? f.instance : slugify(nome),
     }));
     setAvisoExistente(false);
+    setNaoVerificado(null);
   }
 
   function atualizarInstance(instance: string) {
     setForm((f) => ({ ...f, instance, instanceEditadaManualmente: true }));
     setAvisoExistente(false);
+    setNaoVerificado(null);
   }
 
   function validar(): string | null {
@@ -444,8 +502,13 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
       return;
     }
     setErro('');
-    const verificacao = await verificarCliente.mutateAsync(form.instance.trim()).catch(() => null);
-    if (verificacao?.existe) {
+    setNaoVerificado(null);
+    const verificacao = await verificarCliente.mutateAsync(form.instance.trim()).catch(verificacaoComFalha);
+    if (verificacao.existe === null) {
+      setNaoVerificado(verificacao.erro || 'erro desconhecido');
+      return;
+    }
+    if (verificacao.existe) {
       setAvisoExistente(true);
       return;
     }
@@ -561,6 +624,18 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
                 </Button>
               </div>
             </div>
+          )}
+
+          {naoVerificado && (
+            <AvisoNaoVerificado
+              motivo={naoVerificado}
+              onCancelar={() => setNaoVerificado(null)}
+              onContinuar={() => {
+                setNaoVerificado(null);
+                enviarConfirmado();
+              }}
+              ocupado={createCorretor.isPending}
+            />
           )}
 
           {erro && <p className="text-sm text-red-600">{erro}</p>}

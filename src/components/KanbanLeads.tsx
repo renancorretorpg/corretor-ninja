@@ -71,12 +71,12 @@ function Coluna({
       className={`${ativaNoMobile ? 'flex' : 'hidden'} w-full flex-col rounded-lg border border-border bg-muted/30 p-3 md:flex md:w-72 md:shrink-0 ${isOver ? 'ring-2 ring-primary/40' : ''}`}
     >
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <span
-            className="h-2.5 w-2.5 rounded-full"
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: etapa.cor ?? '#94a3b8' }}
           />
-          {etapa.nome}
+          <span className="truncate">{etapa.nome}</span>
         </h3>
         <span className="text-xs text-muted-foreground">{leads.length}</span>
       </div>
@@ -92,6 +92,7 @@ function Coluna({
 export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLeadsProps) {
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [colunaAtivaMobile, setColunaAtivaMobile] = useState<string | null>(null);
+  const [erroMover, setErroMover] = useState<string | null>(null);
   const { data, isLoading, isError, error } = useAllLeadsForKanban({
     status: status || undefined,
     origem: origem || undefined,
@@ -134,7 +135,14 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
     const novoStatus = String(over.id);
     const lead = active.data.current?.lead as Lead | undefined;
     if (!lead || lead.status === novoStatus) return;
-    updateLead.mutate({ id: lead.id, updates: { status: novoStatus } });
+    setErroMover(null);
+    updateLead.mutate(
+      { id: lead.id, updates: { status: novoStatus } },
+      {
+        onError: (err) =>
+          setErroMover(`Não foi possível mover ${lead.nome} para "${novoStatus}": ${(err as Error).message}`),
+      },
+    );
   }
 
   if (isError) {
@@ -144,8 +152,22 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
     return <p className="text-sm text-muted-foreground">Carregando...</p>;
   }
 
+  const totalLeads = data?.total ?? 0;
+  const leadsExibidos = data?.data.length ?? 0;
+
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      {erroMover && (
+        <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          {erroMover}
+        </p>
+      )}
+      {totalLeads > leadsExibidos && (
+        <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800">
+          O Kanban mostra só os {leadsExibidos} leads mais recentes de {totalLeads}. Use os filtros (etapa, busca) ou
+          a visualização em Lista para ver os demais.
+        </p>
+      )}
       <div className="-mx-4 mb-3 flex snap-x snap-mandatory gap-2 overflow-x-auto px-4 pb-1 md:hidden">
         {colunas.map(({ etapa, leads }) => (
           <button
@@ -158,7 +180,7 @@ export function KanbanLeads({ status, origem, search, onSelectLead }: KanbanLead
             }`}
           >
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: etapa.cor ?? '#94a3b8' }} />
-            {etapa.nome}
+            <span className="max-w-[10rem] truncate">{etapa.nome}</span>
             <span className={etapa.nome === colunaAtivaMobile ? 'opacity-80' : 'text-muted-foreground'}>
               {leads.length}
             </span>

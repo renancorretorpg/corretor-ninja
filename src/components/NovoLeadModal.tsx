@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useCreateLead, useEtapas } from '../api';
+import { MSG_TELEFONE_INVALIDO, telefoneValido } from '../utils';
 import { Button, Input, Modal, Select } from './ui';
 
 export function NovoLeadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -31,12 +32,18 @@ export function NovoLeadModal({ open, onClose }: { open: boolean; onClose: () =>
     onClose();
   }
 
+  const telefoneOk = telefoneValido(numero);
+
   async function handleSalvar() {
     setErro(null);
+    if (!telefoneOk) {
+      setErro(MSG_TELEFONE_INVALIDO);
+      return;
+    }
     try {
       await createLead.mutateAsync({
-        nome,
-        sobrenome: sobrenome || undefined,
+        nome: nome.trim(),
+        sobrenome: sobrenome.trim() || undefined,
         numero,
         status: status || undefined,
         origem: origem || undefined,
@@ -56,17 +63,24 @@ export function NovoLeadModal({ open, onClose }: { open: boolean; onClose: () =>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Nome</label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} autoFocus />
+            <Input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={120} autoFocus />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Sobrenome</label>
-            <Input value={sobrenome} onChange={(e) => setSobrenome(e.target.value)} />
+            <Input value={sobrenome} onChange={(e) => setSobrenome(e.target.value)} maxLength={120} />
           </div>
         </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Telefone</label>
-          <Input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="5511999999999" />
+          <Input
+            value={numero}
+            onChange={(e) => setNumero(e.target.value)}
+            placeholder="5511999999999"
+            inputMode="tel"
+            maxLength={25}
+          />
+          {numero.trim() && !telefoneOk && <p className="mt-1 text-xs text-red-600">{MSG_TELEFONE_INVALIDO}</p>}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -83,13 +97,14 @@ export function NovoLeadModal({ open, onClose }: { open: boolean; onClose: () =>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Imóvel de interesse</label>
-            <Input value={origem} onChange={(e) => setOrigem(e.target.value)} />
+            <Input value={origem} onChange={(e) => setOrigem(e.target.value)} maxLength={200} />
           </div>
         </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Notas</label>
           <textarea
+            maxLength={5000}
             className="min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             value={notas}
             onChange={(e) => setNotas(e.target.value)}
@@ -100,7 +115,7 @@ export function NovoLeadModal({ open, onClose }: { open: boolean; onClose: () =>
           <Button variant="outline" onClick={fechar}>
             Cancelar
           </Button>
-          <Button onClick={handleSalvar} disabled={createLead.isPending || !nome.trim() || !numero.trim()}>
+          <Button onClick={handleSalvar} disabled={createLead.isPending || !nome.trim() || !telefoneOk}>
             Salvar
           </Button>
         </div>
