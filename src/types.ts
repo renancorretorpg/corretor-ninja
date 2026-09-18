@@ -143,6 +143,8 @@ export interface NovoCorretorResultado {
   praedium_erro: string | null;
   evolution: 'criado' | 'falhou';
   evolution_erro: string | null;
+  webhook: 'configurado' | 'falhou';
+  webhook_erro: string | null;
   qrcode_base64: string | null;
 }
 

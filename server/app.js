@@ -118,6 +118,12 @@ function normalizarTelefone(valor) {
   return digitos;
 }
 
+// "[nome ]", "[ Nome ]" etc. viram "[nome]". Sem isso, o texto literal do
+// placeholder chegava ao lead porque a substituicao no disparo e' exata.
+function normalizarMensagem(mensagem) {
+  return String(mensagem).trim().replace(/\[\s*nome\s*\]/gi, '[nome]');
+}
+
 const MAX_TAMANHO_NOME = 120;
 const MAX_TAMANHO_NOTAS = 5000;
 const MAX_TAMANHO_ETAPA = 40;
@@ -960,7 +966,7 @@ app.get('/api/campanhas', requireAuth, async (req, res) => {
 // POST /api/campanhas — cria a campanha a partir do wizard
 app.post('/api/campanhas', requireAuth, async (req, res) => {
   try {
-    const mensagens = (req.body.mensagens || []).map((m) => String(m).trim()).filter(Boolean);
+    const mensagens = (req.body.mensagens || []).map(normalizarMensagem).filter(Boolean);
     if (mensagens.length < MIN_MENSAGENS) {
       return res.status(400).json({ error: `Cadastre pelo menos ${MIN_MENSAGENS} variantes de mensagem.` });
     }
@@ -1139,7 +1145,7 @@ app.post('/api/campanhas/from-whatsapp', async (req, res) => {
       return res.status(400).json({ error: 'instance é obrigatória.' });
     }
 
-    const mensagens = (req.body.mensagens || []).map((m) => String(m).trim()).filter(Boolean);
+    const mensagens = (req.body.mensagens || []).map(normalizarMensagem).filter(Boolean);
     if (mensagens.length === 0) {
       return res.status(400).json({ error: 'Nenhuma mensagem de campanha configurada.' });
     }
@@ -1425,6 +1431,60 @@ async function criarInstanciaEvolution(instance) {
   }
 }
 
+// Instancias criadas pelo /instance/create nascem SEM webhook: sem esse passo,
+// o WhatsApp conecta ("open") mas nenhuma mensagem chega no n8n e o agente
+// parece surdo. So MESSAGES_UPSERT e' usado pelo agente (os demais eventos
+// seriam descartados no primeiro no do workflow, so gerando carga).
+const AGENTE_WEBHOOK_URL = process.env.AGENTE_WEBHOOK_URL
+  || 'https://n8n.secretariadocorretor.shop/webhook/agente-whatsapp';
+const AGENTE_WEBHOOK_EVENTOS = ['MESSAGES_UPSERT'];
+
+async function configurarWebhookEvolution(instance) {
+  if (!EVOLUTION_API_URL || !EVOLUTION_API_GLOBAL_KEY) {
+    return { ok: false, erro: 'EVOLUTION_API_URL ou EVOLUTION_API_GLOBAL_KEY não configurados no painel.' };
+  }
+  const headers = { 'Content-Type': 'application/json', apikey: EVOLUTION_API_GLOBAL_KEY };
+  const nome = encodeURIComponent(instance);
+  try {
+    // Envia o formato aninhado (Evolution 2.2+) e o plano (versoes anteriores);
+    // campos desconhecidos sao ignorados, entao os dois convivem.
+    const config = {
+      enabled: true,
+      url: AGENTE_WEBHOOK_URL,
+      events: AGENTE_WEBHOOK_EVENTOS,
+    };
+    const resp = await fetchComTimeout(`${EVOLUTION_API_URL}/webhook/set/${nome}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        webhook: { ...config, byEvents: false, base64: true },
+        ...config,
+        webhookByEvents: false,
+        webhookBase64: true,
+      }),
+    }, 15000);
+    if (!resp.ok) {
+      const corpo = await resp.json().catch(() => ({}));
+      const msg = Array.isArray(corpo.response?.message) ? corpo.response.message.join('; ') : null;
+      return { ok: false, erro: msg || corpo.message || corpo.error || `Evolution API respondeu ${resp.status}` };
+    }
+
+    // Confere o que ficou gravado -- "200 OK" no set nao garante que o
+    // Evolution guardou o que mandamos.
+    const conferencia = await fetchComTimeout(`${EVOLUTION_API_URL}/webhook/find/${nome}`, { headers }, 15000);
+    if (conferencia.ok) {
+      const salvo = await conferencia.json().catch(() => null);
+      const dados = salvo?.webhook || salvo;
+      if (dados && (dados.url !== AGENTE_WEBHOOK_URL || dados.enabled === false)) {
+        return { ok: false, erro: 'O Evolution não gravou o webhook como esperado. Confira a aba Webhook da instância.' };
+      }
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, erro: err.message };
+  }
+}
+
 // Usada tanto pelo cadastro direto quanto pela finalizacao de um convite:
 // cria o login do painel (Supabase Auth), o vinculo em corretor_perfis, e
 // manda o login/senha do Praedium pro n8n (que criptografa e salva na
@@ -1486,6 +1546,9 @@ async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, wha
   }
 
   const evolucao = await criarInstanciaEvolution(instance);
+  const webhook = evolucao.ok
+    ? await configurarWebhookEvolution(instance)
+    : { ok: false, erro: 'A instância do WhatsApp não foi criada.' };
 
   let n8nOk = false;
   let n8nErro = null;
@@ -1523,6 +1586,8 @@ async function criarCorretorCompleto({ instance, nomeCorretor, email, senha, wha
     praedium_erro: n8nOk ? null : n8nErro,
     evolution: evolucao.ok ? 'criado' : 'falhou',
     evolution_erro: evolucao.ok ? null : evolucao.erro,
+    webhook: webhook.ok ? 'configurado' : 'falhou',
+    webhook_erro: webhook.ok ? null : webhook.erro,
     qrcode_base64: evolucao.ok ? evolucao.qrcodeBase64 : null,
   };
 }
@@ -1829,6 +1894,8 @@ async function processarCampanhasAgendadas() {
 
 export {
   app,
+  configurarWebhookEvolution,
+  normalizarMensagem,
   sanitizarTermoBusca,
   processarCampanhasAgendadas,
   SCHEDULER_INTERVAL_MS,

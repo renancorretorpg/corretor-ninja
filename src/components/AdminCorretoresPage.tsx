@@ -80,7 +80,7 @@ function estadoInicial() {
 
 type ResultadoCriacao = Pick<
   NovoCorretorResultado,
-  'praedium' | 'praedium_erro' | 'evolution' | 'evolution_erro' | 'qrcode_base64'
+  'praedium' | 'praedium_erro' | 'evolution' | 'evolution_erro' | 'webhook' | 'webhook_erro' | 'qrcode_base64'
 >;
 
 // Mostra o status do Praedium + o QR code da Evolution (quando gerado) pro
@@ -109,6 +109,14 @@ function ResultadoCriacaoInfo({ resultado }: { resultado: ResultadoCriacao }) {
         <p className="text-sm text-amber-700">
           ⚠️ Não foi possível gerar o QR code do WhatsApp ({resultado.evolution_erro}). Pode gerar manualmente
           depois pelo Evolution Manager.
+        </p>
+      )}
+      {resultado.evolution === 'criado' && resultado.webhook === 'falhou' && (
+        <p role="alert" className="text-sm text-red-700">
+          ⚠️ O webhook do WhatsApp não foi configurado ({resultado.webhook_erro}). Sem ele o corretor conecta, mas o
+          bot não recebe nenhuma mensagem. No Evolution Manager, na aba Webhook da instância, use a URL
+          https://n8n.secretariadocorretor.shop/webhook/agente-whatsapp com o evento MESSAGES_UPSERT e Webhook
+          Base64 ligados.
         </p>
       )}
     </div>
@@ -144,6 +152,8 @@ function ConviteRow({ convite, onResultado }: { convite: Convite; onResultado: (
             praedium_erro: res.praedium_erro,
             evolution: res.evolution,
             evolution_erro: res.evolution_erro,
+            webhook: res.webhook,
+            webhook_erro: res.webhook_erro,
             qrcode_base64: res.qrcode_base64,
           });
         },
@@ -485,6 +495,8 @@ function CadastroDiretoSection({ onResultado }: { onResultado: (r: ResultadoCria
             praedium_erro: res.praedium_erro,
             evolution: res.evolution,
             evolution_erro: res.evolution_erro,
+            webhook: res.webhook,
+            webhook_erro: res.webhook_erro,
             qrcode_base64: res.qrcode_base64,
           });
           setForm(estadoInicial());
