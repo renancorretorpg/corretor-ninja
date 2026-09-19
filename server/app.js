@@ -1706,6 +1706,29 @@ function gerarTokenConvite() {
   return crypto.randomBytes(20).toString('hex');
 }
 
+// Validade dos convites. Enquanto o link nao foi preenchido ele so' vale 7 dias.
+// Depois que o corretor preenche, o convite guarda a senha do painel e a do CRM
+// em texto puro ate' o admin finalizar -- por isso esse trecho e' curto: passou
+// de 48h sem finalizar, o convite (e as senhas) e' apagado.
+const CONVITE_PENDENTE_VALIDADE_MS = 7 * 24 * 60 * 60 * 1000;
+const CONVITE_PREENCHIDO_VALIDADE_MS = 48 * 60 * 60 * 1000;
+
+function conviteExpirado(convite, agora = Date.now()) {
+  const preenchido = convite.status === 'preenchido';
+  const validade = preenchido ? CONVITE_PREENCHIDO_VALIDADE_MS : CONVITE_PENDENTE_VALIDADE_MS;
+  // Preenchido sem preenchido_em (nao deveria acontecer) cai na data de criacao.
+  const base = Date.parse((preenchido && convite.preenchido_em) || convite.criado_em);
+  if (Number.isNaN(base)) return false;
+  return agora - base > validade;
+}
+
+function conviteExpiraEm(convite) {
+  const preenchido = convite.status === 'preenchido';
+  const validade = preenchido ? CONVITE_PREENCHIDO_VALIDADE_MS : CONVITE_PENDENTE_VALIDADE_MS;
+  const base = Date.parse((preenchido && convite.preenchido_em) || convite.criado_em);
+  return Number.isNaN(base) ? null : new Date(base + validade).toISOString();
+}
+
 app.post('/api/admin/convites', requireAuth, requireAdmin, async (_req, res) => {
   try {
     const token = gerarTokenConvite();
@@ -1730,7 +1753,10 @@ app.get('/api/admin/convites', requireAuth, requireAdmin, async (_req, res) => {
       .order('criado_em', { ascending: false });
     if (error) throw error;
     const base = PANEL_PUBLIC_URL || '';
-    res.json({ data: (data || []).map((c) => ({ ...c, url: `${base}/convite/${c.token}` })) });
+    // Esconde os ja vencidos (a limpeza periodica os apaga do banco) e informa
+    // quando cada um expira.
+    const vigentes = (data || []).filter((c) => !conviteExpirado(c));
+    res.json({ data: vigentes.map((c) => ({ ...c, url: `${base}/convite/${c.token}`, expira_em: conviteExpiraEm(c) })) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno. Tente novamente em instantes.' });
@@ -1766,6 +1792,11 @@ app.post('/api/admin/convites/:id/finalizar', requireAuth, requireAdmin, async (
     if (!convite || convite.status !== 'preenchido') {
       return res.status(404).json({ error: 'Convite não encontrado ou ainda não preenchido pelo corretor.' });
     }
+    if (conviteExpirado(convite)) {
+      // Apaga na hora (com as senhas em texto puro) em vez de esperar a limpeza.
+      await supabase.from('convites_corretor').delete().eq('id', req.params.id);
+      return res.status(410).json({ error: 'Esse convite expirou (mais de 48h sem finalizar). Gere um novo link e peça ao corretor para preencher de novo.' });
+    }
 
     const resultado = await criarCorretorCompleto({
       instance,
@@ -1796,10 +1827,10 @@ app.get('/api/convites/:token', async (req, res) => {
   try {
     const { data: convite } = await supabase
       .from('convites_corretor')
-      .select('status')
+      .select('status, criado_em, preenchido_em')
       .eq('token', req.params.token)
       .maybeSingle();
-    if (!convite || convite.status !== 'pendente') {
+    if (!convite || convite.status !== 'pendente' || conviteExpirado(convite)) {
       return res.status(404).json({ error: 'Convite inválido, expirado ou já utilizado.' });
     }
     res.json({ valido: true });
@@ -1831,11 +1862,11 @@ app.post('/api/convites/:token', async (req, res) => {
   try {
     const { data: convite, error: buscaError } = await supabase
       .from('convites_corretor')
-      .select('id, status')
+      .select('id, status, criado_em, preenchido_em')
       .eq('token', req.params.token)
       .maybeSingle();
     if (buscaError) throw buscaError;
-    if (!convite || convite.status !== 'pendente') {
+    if (!convite || convite.status !== 'pendente' || conviteExpirado(convite)) {
       return res.status(404).json({ error: 'Convite inválido, expirado ou já utilizado.' });
     }
 
@@ -1903,6 +1934,37 @@ async function processarCampanhasAgendadas() {
   }
 }
 
+// Apaga do banco os convites vencidos (link nao preenchido ha mais de 7 dias, ou
+// preenchido e nao finalizado ha mais de 48h). E' o que tira as senhas em texto
+// puro do banco: as rotas acima ja recusam convite vencido, isto faz o delete.
+const LIMPEZA_CONVITES_INTERVAL_MS = 60 * 60 * 1000;
+async function limparConvitesExpirados(agora = Date.now()) {
+  try {
+    const limitePendente = new Date(agora - CONVITE_PENDENTE_VALIDADE_MS).toISOString();
+    const limitePreenchido = new Date(agora - CONVITE_PREENCHIDO_VALIDADE_MS).toISOString();
+    const pendentes = await supabase
+      .from('convites_corretor')
+      .delete({ count: 'exact' })
+      .eq('status', 'pendente')
+      .lt('criado_em', limitePendente);
+    if (pendentes.error) throw pendentes.error;
+    const preenchidos = await supabase
+      .from('convites_corretor')
+      .delete({ count: 'exact' })
+      .eq('status', 'preenchido')
+      .lt('preenchido_em', limitePreenchido);
+    if (preenchidos.error) throw preenchidos.error;
+    const total = (pendentes.count || 0) + (preenchidos.count || 0);
+    if (total > 0) {
+      console.log(`Convites expirados apagados: ${pendentes.count || 0} nao preenchidos, ${preenchidos.count || 0} preenchidos.`);
+    }
+    return total;
+  } catch (err) {
+    console.error('Erro na limpeza de convites expirados:', err);
+    return 0;
+  }
+}
+
 export {
   app,
   configurarWebhookEvolution,
@@ -1910,4 +1972,10 @@ export {
   sanitizarTermoBusca,
   processarCampanhasAgendadas,
   SCHEDULER_INTERVAL_MS,
+  conviteExpirado,
+  conviteExpiraEm,
+  limparConvitesExpirados,
+  LIMPEZA_CONVITES_INTERVAL_MS,
+  CONVITE_PENDENTE_VALIDADE_MS,
+  CONVITE_PREENCHIDO_VALIDADE_MS,
 };
