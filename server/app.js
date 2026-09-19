@@ -91,6 +91,16 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+// Compara o segredo compartilhado do webhook em tempo constante (evita
+// vazar o valor por diferenca de tempo de resposta). Os dois lados passam
+// por sha256 pra terem sempre o mesmo tamanho, que timingSafeEqual exige.
+function segredoWebhookValido(req) {
+  const enviado = req.headers['x-webhook-secret'];
+  if (typeof enviado !== 'string' || !enviado) return false;
+  const hash = (v) => crypto.createHash('sha256').update(v).digest();
+  return crypto.timingSafeEqual(hash(enviado), hash(N8N_WEBHOOK_SECRET));
+}
+
 // Usar sempre depois de requireAuth (precisa de req.isAdmin ja resolvido).
 function requireAdmin(req, res, next) {
   if (!req.isAdmin) {
@@ -1102,7 +1112,7 @@ app.post('/api/campanhas', requireAuth, async (req, res) => {
 // instance qualquer chamador com o secret poderia marcar a campanha de
 // qualquer outro corretor so adivinhando o id sequencial).
 app.patch('/api/campanhas/:id/status', async (req, res) => {
-  if (req.headers['x-webhook-secret'] !== N8N_WEBHOOK_SECRET) {
+  if (!segredoWebhookValido(req)) {
     return res.status(401).json({ error: 'Não autorizado.' });
   }
   const { status, erro_mensagem: erroMensagem, instance } = req.body;
@@ -1136,7 +1146,7 @@ app.patch('/api/campanhas/:id/status', async (req, res) => {
 // n8n (config mensagens_disparo do cliente); sem imagens proprias -- usa a
 // pasta compartilhada de teasers no envio, igual ao disparo imediato do bot.
 app.post('/api/campanhas/from-whatsapp', async (req, res) => {
-  if (req.headers['x-webhook-secret'] !== N8N_WEBHOOK_SECRET) {
+  if (!segredoWebhookValido(req)) {
     return res.status(401).json({ error: 'Não autorizado.' });
   }
   try {
@@ -1241,7 +1251,8 @@ app.delete('/api/campanhas/:id', requireAuth, async (req, res) => {
     const { error } = await supabase
       .from('campanhas')
       .update({ status: 'cancelada', updated_at: new Date().toISOString() })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('instance', req.instance);
     if (error) throw error;
 
     res.json({ ok: true });
